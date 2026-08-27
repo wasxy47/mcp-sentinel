@@ -1,0 +1,13 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "rootDir": "./src",
+        "outDir": "./dist"
+    },
+    "include": ["src/**/*.ts"],
+    // `*.testkit.ts` holds fixtures shared between test files. Excluded from the
+    // build for the same reason tests are — nothing that exists only to support
+    // tests belongs in dist — but still typechecked by tsconfig.typecheck.json.
+    "exclude": ["src/**/*.test.ts", "src/**/*.testkit.ts"],
+    "references": [{ "path": "../../packages/mcp-core" }]
+}

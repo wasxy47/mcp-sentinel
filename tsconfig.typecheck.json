@@ -1,0 +1,19 @@
+{
+    // Typechecks everything the build deliberately excludes — test files above
+    // all — without emitting. `tsc --build` skips these because tests must not
+    // end up in dist; they still need to be type-correct.
+    //
+    // Cross-package imports resolve through the workspace symlinks in
+    // node_modules to each package's `dist`, so run `npm run build` first.
+    "extends": "./tsconfig.base.json",
+    "compilerOptions": {
+        "noEmit": true,
+        "composite": false,
+        "declaration": false,
+        "declarationMap": false,
+        "sourceMap": false,
+        "incremental": false,
+        "types": ["node"]
+    },
+    "include": ["packages/*/src/**/*.ts", "apps/*/src/**/*.ts", "vitest.config.ts"]
+}

@@ -1,0 +1,217 @@
+// MCP Sentinel — Cedar schema
+//
+// Written before the policy engine that consumes it, so that the *shape* of an
+// authorization question is settled before any code assumes an answer.
+//
+// The modelling decision that matters: a tool call is authorized against the
+// tool AND the extracted features of its arguments. Tool-level allow/deny is far
+// too coarse — `execute_sql` is fine, `DROP TABLE users` is not; `read_file` is
+// fine, `../../etc/shadow` is not. So `context` carries deterministic features
+// extracted from the arguments, and policies constrain those.
+//
+// Cedar's decision is binary. The four-outcome pipeline (allow / review /
+// approve / deny) is expressed by a `@sentinel_obligation` annotation on each
+// permit policy; see docs/architecture.md § 4.2.
+//
+// Validate with:  npm run policy:lint
+
+namespace Sentinel {
+
+    // ─── Principals ──────────────────────────────────────────────────────────
+
+    // Groups let policy speak about classes of agent rather than instances.
+    // Membership is supplied by operator configuration, never self-reported.
+    entity AgentGroup;
+
+    entity Agent in [AgentGroup] = {
+        // Operator-assigned. NEVER derived from clientInfo, which is an
+        // unverified assertion by the caller. See threat-model.md T21.
+        "trustTier": String,
+        // True only when the id came from a verified token.
+        "authenticated": Bool,
+        // Self-reported, recorded for audit. Deliberately NOT usable as an
+        // identity: policies keyed on this are keyed on attacker input.
+        "clientName": String,
+    };
+
+    // ─── Upstream servers ────────────────────────────────────────────────────
+
+    entity Server = {
+        "serverId": String,
+        // "trusted" | "untrusted" | "quarantined" — operator-declared.
+        "trust": String,
+        // Worst scan verdict across any of this server's tools.
+        "scanVerdict": String,
+    };
+
+    // ─── Resources ───────────────────────────────────────────────────────────
+
+    // Capability groups, e.g. ToolGroup::"read_only", ToolGroup::"mutating",
+    // ToolGroup::"exfiltration_capable". A tool may belong to several. This is
+    // what lets one policy govern a class of tools across servers.
+    entity ToolGroup in [ToolGroup];
+
+    entity Tool in [ToolGroup] = {
+        // Namespaced name the agent sees, e.g. "files__read_file".
+        "qualifiedName": String,
+        // Bare name the upstream server knows, e.g. "read_file".
+        "toolName": String,
+        "server": Server,
+        // "clean" | "suspicious" | "malicious" from packages/scanner.
+        "scanVerdict": String,
+        // True when this definition differs from the one last approved —
+        // the rug-pull signal. See threat-model.md T3.
+        "definitionDrifted": Bool,
+    };
+
+    entity McpResource = {
+        "uri": String,
+        "server": Server,
+        "scheme": String,
+    };
+
+    entity Prompt = {
+        "qualifiedName": String,
+        "server": Server,
+        "scanVerdict": String,
+    };
+
+    // Singleton resource for requests that do not name a target — listings,
+    // discovery, and Sentinel's own governance tools. Cedar requires every
+    // request to have a resource, and inventing a fake Tool for these would let
+    // tool policies accidentally match them.
+    entity Endpoint;
+
+    // ─── Context ─────────────────────────────────────────────────────────────
+
+    // Present on every request.
+    type BaseContext = {
+        "protocolVersion": String,
+        // Digest of the unredacted arguments. Lets a policy pin an exact
+        // payload — used by approval replay to prove the approved call is the
+        // call that runs, not a substituted one.
+        "argsDigest": String,
+        // Wall-clock hour in UTC, 0–23. Enables business-hours policies without
+        // giving Cedar a clock (Cedar has no notion of "now").
+        "hourUtc": Long,
+    };
+
+    // Deterministic features extracted from tool arguments by
+    // packages/policy-engine. Every field is computed by static inspection —
+    // no model involved — so policy decisions stay reproducible and auditable.
+    type ToolCallContext = {
+        "protocolVersion": String,
+        "argsDigest": String,
+        "hourUtc": Long,
+
+        // -- shape --
+        "argCount": Long,
+        "argBytes": Long,
+
+        // -- filesystem-ish arguments --
+        // True when every path-looking argument resolves inside the configured
+        // workspace root. Absent paths make this true (nothing escaped).
+        "pathsWithinWorkspace": Bool,
+        "hasAbsolutePath": Bool,
+        // Literal ".." segment before resolution — worth flagging separately
+        // from the resolved verdict, because it signals intent.
+        "hasParentTraversal": Bool,
+        // Matches a known-sensitive location: ~/.ssh, ~/.aws, .env, private
+        // keys, credential stores.
+        "hasSensitivePath": Bool,
+        "fileExtensions": Set<String>,
+
+        // -- network-ish arguments --
+        "hasUrl": Bool,
+        "urlHosts": Set<String>,
+        // True when any URL host is outside the configured allowlist.
+        "hasExternalUrl": Bool,
+
+        // -- SQL-ish arguments --
+        // "none" | "select" | "insert" | "update" | "delete" | "ddl" | "unknown"
+        // "unknown" is NOT benign: it means parsing failed, which policy should
+        // treat at least as cautiously as a write.
+        "sqlKind": String,
+        "sqlIsDestructive": Bool,
+        // Statement count > 1 — a classic injection tell.
+        "sqlIsMultiStatement": Bool,
+
+        // -- shell-ish arguments --
+        "hasShellMetacharacters": Bool,
+
+        // -- payload inspection --
+        // Redaction found something credential-shaped in the arguments.
+        // Sending credentials to an untrusted server is worth a policy.
+        "containsCredential": Bool,
+        // Zero-width / bidi / tag characters in any string argument.
+        "hasInvisibleUnicode": Bool,
+
+        // -- upstream posture, denormalised for convenient policy writing --
+        "serverTrust": String,
+        "toolScanVerdict": String,
+
+        // -- second-pass only --
+        // Present only when the risk engine has already scored this call and
+        // policy is being re-evaluated with that score in hand. Optional, so a
+        // first-pass request validates without it.
+        "riskScore"?: Long,
+        "riskBand"?: String,
+        // Present only when replaying an approved call.
+        "approvalId"?: String,
+    };
+
+    type ResourceReadContext = {
+        "protocolVersion": String,
+        "argsDigest": String,
+        "hourUtc": Long,
+        "scheme": String,
+        "pathsWithinWorkspace": Bool,
+        "hasSensitivePath": Bool,
+        "hasExternalUrl": Bool,
+        "serverTrust": String,
+    };
+
+    // ─── Actions ─────────────────────────────────────────────────────────────
+    //
+    // Action names mirror MCP methods. They describe what the AGENT is doing,
+    // never what Sentinel decides to do about it — that is the obligation's job.
+
+    action "callTool" appliesTo {
+        principal: [Agent],
+        resource: [Tool],
+        context: ToolCallContext,
+    };
+
+    action "readResource" appliesTo {
+        principal: [Agent],
+        resource: [McpResource],
+        context: ResourceReadContext,
+    };
+
+    action "getPrompt" appliesTo {
+        principal: [Agent],
+        resource: [Prompt],
+        context: BaseContext,
+    };
+
+    // Listings and discovery. Cheap and non-mutating, but still policy-governed:
+    // hiding a server's catalog from a low-trust agent is a real control, and
+    // `discover` is the agent's first request so denying it is how a
+    // fully-revoked agent finds out.
+    action "listTools", "listResources", "listPrompts", "discover" appliesTo {
+        principal: [Agent],
+        resource: [Endpoint],
+        context: BaseContext,
+    };
+
+    // Sentinel's own governance tools. Separated from `callTool` so that
+    // granting an agent read access to its own audit trail does not require
+    // touching any upstream tool policy — and so that `approveRequest` can never
+    // be reached by a policy written about upstream tools.
+    action "explainDecision", "queryAuditLog", "listActivePolicies",
+           "verifyAuditChain", "approveRequest" appliesTo {
+        principal: [Agent],
+        resource: [Endpoint],
+        context: BaseContext,
+    };
+}

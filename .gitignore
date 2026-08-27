@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Secrets — never commit. See .env.example for the template.
+.env
+.env.*
+!.env.example
+
+# Runtime data: audit database and the out-of-band checkpoint journal
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.checkpoints.jsonl
+
+# Logs / editor / OS
+*.log
+npm-debug.log*
+.vscode/
+.idea/
+.DS_Store
+
+# Test artifacts
+coverage/
+.vitest/

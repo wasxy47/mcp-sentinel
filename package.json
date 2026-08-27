@@ -1,0 +1,42 @@
+{
+  "name": "mcp-sentinel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Security and governance gateway for AI agents using the Model Context Protocol",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean && rm -rf packages/*/dist apps/*/dist",
+    "typecheck": "tsc --build && tsc -p tsconfig.typecheck.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "policy:lint": "node scripts/policy-lint.mjs",
+    "check": "npm run typecheck && npm run policy:lint && npm run test",
+    "gateway": "node --enable-source-maps apps/gateway/dist/main.js",
+    "gateway:dev": "tsx watch apps/gateway/src/main.ts"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^20.19.9",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "@cedar-policy/cedar-wasm": "^4.12.0",
+    "@hono/node-server": "^1.19.17",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/core": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "hono": "^4.13.3",
+    "zod": "^4.4.3"
+  }
+}
