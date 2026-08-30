@@ -229,13 +229,30 @@ export const HttpSchema = z.object({
      * a deliberate, reviewable act.
      */
     host: z.string().min(1).default('127.0.0.1'),
-    port: z.number().int().min(1).max(65_535).default(8787),
+    port: z.number().int().min(0).max(65_535).default(8787),
     /**
      * Origins permitted by the DNS-rebinding check the spec requires for local
      * servers. Empty means "loopback origins and requests with no Origin
      * header", which is the correct default for a locally-bound gateway.
      */
-    allowedOrigins: z.array(z.string()).default([])
+    allowedOrigins: z.array(z.string()).default([]),
+    /**
+     * Wire-level HTTP body size cap — the cheapest and earliest bound (T17).
+     *
+     * This runs before the body is parsed: the connection is rejected at the
+     * transport gate, which is the right place for a resource-exhaustion
+     * defence. The parsed-params cap (`forward.maxArgumentBytes`) runs later
+     * and catches the specific case of oversized tool arguments; this one
+     * catches anything that would cost too much to even parse.
+     *
+     * 4 MiB is the default. It is deliberately larger than `maxArgumentBytes`
+     * (256 KiB) because the framing around the params is not zero-cost to
+     * parse either, and because future capabilities (elicitation payloads,
+     * embedded resources) may legitimately run larger. Raise it only having
+     * thought about the parsing cost — this number is what an attacker can
+     * push into the parser before being cut off.
+     */
+    maxBodyBytes: z.number().int().positive().max(67_108_864).default(4_194_304)
 });
 
 export const GatewayConfigSchema = z

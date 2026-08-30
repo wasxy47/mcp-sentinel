@@ -57,7 +57,7 @@ describe('parseConfig defaults', () => {
         const config = parseConfig(minimal(), { baseDir: BASE, env: {} });
 
         expect(config.instanceName).toBe('mcp-sentinel');
-        expect(config.http).toEqual({ host: '127.0.0.1', port: 8787, allowedOrigins: [] });
+        expect(config.http).toEqual({ host: '127.0.0.1', port: 8787, allowedOrigins: [], maxBodyBytes: 4194304 });
         expect(config.upstream.connectTimeoutMs).toBe(10_000);
         expect(config.upstream.requestTimeoutMs).toBe(30_000);
         expect(config.upstream.upstreamProtocol).toBe('auto');
@@ -210,7 +210,7 @@ describe('parseConfig validation', () => {
 
     it('lists every issue rather than only the first', () => {
         try {
-            parseConfig({ workspaceRoot: 'w', http: { port: 0 }, instanceName: '' }, { baseDir: BASE, env: {} });
+            parseConfig({ workspaceRoot: 'w', http: { port: 99999 }, instanceName: '' }, { baseDir: BASE, env: {} });
             expect.unreachable('should have thrown');
         } catch (error) {
             expect(error).toBeInstanceOf(ConfigError);
