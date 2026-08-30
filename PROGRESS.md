@@ -51,9 +51,19 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
       a real in-process 2026-07-28 Streamable HTTP connection
       (`createMcpHandler` + a `fetch` override) to assert the outbound headers on
       the wire. `npm run check` green (349 tests total).*
-- [ ] **M1.4 Sentinel as a real MCP server** — low-level `Server`, capability
-      registration, `tasks/*` including the 2026-07-28 `tasks/update` extension
-      method.
+- [x] **M1.4 Sentinel as a real MCP server** — `SentinelServer` per-request
+      factory via `createMcpHandler` with `legacy: 'reject'` enforcing 2026-07-28
+      only. Handlers: `server/discover`, `tools/list` (catalog + sentinel governance
+      tools), `tools/call` (route → forward; sentinel own tools return isError stub
+      deferred to M7), `resources/read` and `prompts/get` (conditional on upstream
+      capability), `tasks/*` (get/cancel/list/update → -32601 MethodNotFound with
+      M5.5 deferral message). `sentinel-tools.ts`: five governance tool definitions
+      with full inputSchema. `http.ts`: Hono transport with origin allowlist, body
+      size cap, `/health` endpoint. `main.ts`: entry point wiring. Config additions:
+      `maxBodyBytes`, `port: 0` for ephemeral binding.
+      *29 integration tests against a `MockModernClient` that constructs raw
+      2026-07-28 JSON-RPC requests with correct `_meta` envelopes and header
+      framing. 15 HTTP transport tests. `npm run check` green (393 tests total).*
 
 ## M2 — Policy engine
 
