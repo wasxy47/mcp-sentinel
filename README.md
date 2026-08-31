@@ -1,9 +1,9 @@
 # MCP Sentinel
 
-> ⚠️ **Active Development** — This project is under active construction.
-> Milestones M0–M1 are complete (foundations + passthrough gateway).
-> M2 (policy engine) is next. The API surface, config schema, and wire
-> behaviour will change until v1.0. Do not run this in production yet.
+> ⚠️ **Status: Active Development**
+> Sentinel is currently under active development.
+> We have completed M3 (Hash-chained audit trail) and are beginning work on M4 (Risk engine).
+> See [PROGRESS.md](PROGRESS.md) for detailed milestone tracking.
 
 **Security and governance gateway for AI agents using the
 [Model Context Protocol](https://modelcontextprotocol.io/) (MCP).**
@@ -28,8 +28,8 @@ trail — before being forwarded to the upstream server.
 | Layer | What happens | Status |
 |-------|-------------|--------|
 | **Passthrough gateway** | Connects to upstream MCP servers, aggregates their tool catalogs under namespaced names (`server__tool`), forwards calls with header/body re-assertion | ✅ Done (M1) |
-| **Policy engine** | Evaluates every request against a [Cedar](https://www.cedarpolicy.com/) policy bundle — allow, deny, review, or require approval | 🔜 Next (M2) |
-| **Audit trail** | Hash-chained append-only log of every decision, tamper-detectable | Planned (M3) |
+| **Policy engine** | Evaluates a Cedar policy bundle against every action. Resources are extracted by deeply inspecting `tools/call` arguments (e.g., catching `../` directory traversal in a path parameter) | ✅ Done (M2) |
+| **Audit trail** | Records an unalterable, cryptographically hash-chained log of every decision and its exact context (RFC 8785) into a tamper-evident SQLite store | ✅ Done (M3) |
 | **Risk scoring** | Heuristic + optional LLM-based risk assessment for escalation decisions | Planned (M4) |
 | **Approval flow** | Suspend dangerous calls, notify via Discord, resume on human approval | Planned (M5) |
 | **Server scanner** | Detect tool poisoning, invisible Unicode, definition drift, injection | Planned (M6) |

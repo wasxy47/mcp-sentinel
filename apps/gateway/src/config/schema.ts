@@ -263,7 +263,7 @@ export const GatewayConfigSchema = z
         /** Directory holding `schema.cedarschema` and the `*.cedar` bundle. */
         policyDir: z.string().min(1).default('policies'),
         /** SQLite file for the hash-chained audit trail (M3). */
-        auditDb: z.string().min(1).default('data/audit.db'),
+        auditDb: z.string().min(1).default('.sentinel/audit.db'),
         /**
          * Filesystem root that `pathsWithinWorkspace` is computed against. Policy
          * leans on this heavily, so it is required to be explicit rather than

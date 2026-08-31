@@ -9,5 +9,10 @@
     // build for the same reason tests are — nothing that exists only to support
     // tests belongs in dist — but still typechecked by tsconfig.typecheck.json.
     "exclude": ["src/**/*.test.ts", "src/**/*.testkit.ts"],
-    "references": [{ "path": "../../packages/mcp-core" }]
+    "references": [
+        { "path": "../../packages/mcp-core" },
+        { "path": "../../packages/policy-engine" },
+        { "path": "../../packages/audit" },
+        { "path": "../../packages/risk-engine" }
+    ]
 }

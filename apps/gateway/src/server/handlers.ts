@@ -67,7 +67,14 @@ import {
     agentPrincipalFromIdentity,
     toolResource,
 } from '@mcp-sentinel/policy-engine';
-import { PolicyDeniedError } from '@mcp-sentinel/mcp-core';
+import {
+    PolicyDeniedError,
+    newId,
+    isoTimestamp,
+    digestOf,
+    type DecisionRecord
+} from '@mcp-sentinel/mcp-core';
+import type { AuditStore, AuditWriteError } from '@mcp-sentinel/audit';
 
 /** The message every tasks/* stub returns. Searchable in logs and issues. */
 export const TASKS_DEFERRED_MESSAGE =
@@ -92,6 +99,8 @@ export interface SentinelServerDeps {
     readonly logger: Logger;
     /** Optional policy engine. If absent, evaluation is skipped (warns). */
     readonly policyEngine?: PolicyEngine | undefined;
+    /** Optional audit store. If absent, audit logging is skipped (warns). */
+    readonly auditStore?: AuditStore | undefined;
     /** Injectable clock. Tests must not depend on wall time. */
     readonly now?: () => number;
 }
@@ -111,6 +120,8 @@ export class SentinelServer {
     private readonly catalog: ToolCatalog;
     private readonly logger: Logger;
     private readonly policyEngine?: PolicyEngine;
+    private readonly auditStore?: AuditStore;
+    private readonly now?: () => number;
     private readonly router: ForwardRouter;
     private readonly forwarder: Forwarder;
 
@@ -131,9 +142,18 @@ export class SentinelServer {
         if (deps.policyEngine) {
             this.policyEngine = deps.policyEngine;
         }
+        if (deps.auditStore) {
+            this.auditStore = deps.auditStore;
+        }
+        if (deps.now) {
+            this.now = deps.now;
+        }
 
         if (!this.policyEngine) {
             this.logger.warn('SentinelServer starting without a PolicyEngine — all calls will bypass policy evaluation');
+        }
+        if (!this.auditStore) {
+            this.logger.warn('SentinelServer starting without an AuditStore — all decisions will be unrecorded');
         }
 
         this.router = new ForwardRouter({
@@ -261,6 +281,10 @@ export class SentinelServer {
                 throw new Error('unexpected route kind for tools/call');
             }
 
+            const start = this.now ? this.now() : Date.now();
+            let decision;
+            let context;
+            
             // M2 policy evaluation
             if (this.policyEngine) {
                 const entry = this.catalog.get(name);
@@ -271,7 +295,7 @@ export class SentinelServer {
                 const trust = snap?.trust ?? 'untrusted';
                 
                 const resource = toolResource(entry, this.config.toolGroups, trust);
-                const context = extractToolCallContext(params.arguments, {
+                context = extractToolCallContext(params.arguments, {
                     workspaceRoot: this.config.workspaceRoot,
                     allowedHosts: this.config.http.allowedOrigins, // using allowedOrigins as allowedHosts for now
                     protocolVersion: '2026-07-28',
@@ -279,8 +303,29 @@ export class SentinelServer {
                     toolScanVerdict: entry.scan?.verdict ?? 'clean'
                 });
 
-                const decision = this.enforcePolicy('callTool', resource, context);
+                decision = this.enforcePolicy('callTool', resource, context);
+                
                 if (decision && decision.obligation !== 'allow') {
+                    // Record deferred decision in audit
+                    const record: DecisionRecord = {
+                        decisionId: newId('decision'),
+                        timestamp: isoTimestamp(start),
+                        agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
+                        protocolVersion: '2026-07-28',
+                        method: 'tools/call',
+                        qualifiedName: name,
+                        serverId: entry.serverId,
+                        upstreamName: entry.toolName,
+                        verdict: 'pending_approval',
+                        obligation: decision.obligation,
+                        policy: decision,
+                        argsDigest: digestOf(params.arguments),
+                        redactionFindings: [], // TODO: redact
+                        latencyMs: (this.now ? this.now() : Date.now()) - start,
+                        degraded: false
+                    };
+                    this.appendAudit(record);
+                    
                     // M4/M5 stub
                     return {
                         content: [{ type: 'text', text: `Call deferred: requires ${decision.obligation}. (M4/M5 functionality not yet implemented)` }],
@@ -289,21 +334,54 @@ export class SentinelServer {
                 }
             }
 
-            // M3 will add audit writes around the call.
-            const outcome = await this.forwarder.forward(route.target, undefined);
-            return outcome.result;
+            // M3: Upstream tool: route and forward, with audit wrap
+            const serverId = this.catalog.get(name)?.serverId;
+            const upstreamName = this.catalog.get(name)?.toolName;
+
+            const recordBase = {
+                decisionId: newId('decision'),
+                timestamp: isoTimestamp(start),
+                agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
+                protocolVersion: '2026-07-28',
+                method: 'tools/call',
+                qualifiedName: name,
+                ...(serverId !== undefined ? { serverId } : {}),
+                ...(upstreamName !== undefined ? { upstreamName } : {}),
+                verdict: 'allow' as const,
+                obligation: decision?.obligation ?? 'allow',
+                policy: decision ?? { effect: 'permit' as const, obligation: 'allow' as const, reasons: [], errors: [], defaultDeny: false },
+                argsDigest: digestOf(params.arguments),
+                redactionFindings: [],
+                degraded: false
+            };
+
+            this.appendAudit({
+                ...recordBase,
+                latencyMs: (this.now ? this.now() : Date.now()) - start,
+            });
+            
+            try {
+                const outcome = await this.forwarder.forward(route.target, undefined);
+                // Ideally we'd append an audit update here with resultDigest, but AuditStore is append-only.
+                return outcome.result;
+            } catch (error) {
+                // If upstream fails, we might want to log that too, but we already audited the allowance.
+                throw error;
+            }
         });
 
         // ── resources/read ───────────────────────────────────────────────────────
         // Only registered when at least one ready upstream advertises resources.
         if (capabilities.resources !== undefined) {
             server.setRequestHandler('resources/read', RESOURCES_READ_SCHEMA, async (params) => {
+                const start = this.now ? this.now() : Date.now();
                 const metadata = buildInlineMetadata('resources/read', params.uri);
                 const route = this.router.route(metadata, { method: 'resources/read', params });
                 if (route.kind !== 'forward') {
                     throw new Error('unexpected route kind for resources/read');
                 }
 
+                let decision;
                 if (this.policyEngine) {
                     const snap = this.registry.snapshots().find(s => s.serverId === route.target.serverId);
                     const trust = snap?.trust ?? 'untrusted';
@@ -323,14 +401,59 @@ export class SentinelServer {
                         serverScanVerdict: snap?.health === 'ready' ? 'clean' : 'unknown',
                         scheme: new URL(route.target.upstreamName).protocol.slice(0, -1)
                     };
-                    const decision = this.enforcePolicy('readResource', resource, context);
+                    decision = this.enforcePolicy('readResource', resource, context);
                     if (decision && decision.obligation !== 'allow') {
+                        // Record deferred decision in audit
+                        const record: DecisionRecord = {
+                            decisionId: newId('decision'),
+                            timestamp: isoTimestamp(start),
+                            agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
+                            protocolVersion: '2026-07-28',
+                            method: 'resources/read',
+                            qualifiedName: params.uri,
+                            serverId: route.target.serverId,
+                            upstreamName: route.target.upstreamName,
+                            verdict: 'pending_approval',
+                            obligation: decision.obligation,
+                            policy: decision,
+                            argsDigest: digestOf(params),
+                            redactionFindings: [],
+                            latencyMs: (this.now ? this.now() : Date.now()) - start,
+                            degraded: false
+                        };
+                        this.appendAudit(record);
                         throw new PolicyDeniedError(`readResource requires ${decision.obligation}`, { obligation: decision.obligation });
                     }
                 }
 
-                const outcome = await this.forwarder.forward(route.target, undefined);
-                return outcome.result;
+                const recordBase = {
+                    decisionId: newId('decision'),
+                    timestamp: isoTimestamp(start),
+                    agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
+                    protocolVersion: '2026-07-28',
+                    method: 'resources/read',
+                    qualifiedName: params.uri,
+                    serverId: route.target.serverId,
+                    upstreamName: route.target.upstreamName,
+                    verdict: 'allow' as const,
+                    obligation: decision?.obligation ?? 'allow',
+                    policy: decision ?? { effect: 'permit' as const, obligation: 'allow' as const, reasons: [], errors: [], defaultDeny: false },
+                    argsDigest: digestOf(params),
+                    redactionFindings: [],
+                    degraded: false
+                };
+    
+                this.appendAudit({
+                    ...recordBase,
+                    latencyMs: (this.now ? this.now() : Date.now()) - start,
+                });
+
+                try {
+                    const outcome = await this.forwarder.forward(route.target, undefined);
+                    return outcome.result;
+                } catch (error) {
+                    throw error;
+                }
             });
         }
 
@@ -338,12 +461,14 @@ export class SentinelServer {
         // Only registered when at least one ready upstream advertises prompts.
         if (capabilities.prompts !== undefined) {
             server.setRequestHandler('prompts/get', PROMPTS_GET_SCHEMA, async (params) => {
+                const start = this.now ? this.now() : Date.now();
                 const metadata = buildInlineMetadata('prompts/get', params.name);
                 const route = this.router.route(metadata, { method: 'prompts/get', params });
                 if (route.kind !== 'forward') {
                     throw new Error('unexpected route kind for prompts/get');
                 }
 
+                let decision;
                 if (this.policyEngine) {
                     const snap = this.registry.snapshots().find(s => s.serverId === route.target.serverId);
                     const trust = snap?.trust ?? 'untrusted';
@@ -356,14 +481,59 @@ export class SentinelServer {
                         serverScanVerdict: snap?.health === 'ready' ? 'clean' : 'unknown',
                         promptScanVerdict: 'clean'
                     };
-                    const decision = this.enforcePolicy('getPrompt', resource, extractBaseContext('2026-07-28'));
+                    decision = this.enforcePolicy('getPrompt', resource, extractBaseContext('2026-07-28'));
                     if (decision && decision.obligation !== 'allow') {
+                        // Record deferred decision in audit
+                        const record: DecisionRecord = {
+                            decisionId: newId('decision'),
+                            timestamp: isoTimestamp(start),
+                            agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
+                            protocolVersion: '2026-07-28',
+                            method: 'prompts/get',
+                            qualifiedName: params.name,
+                            serverId: route.target.serverId,
+                            upstreamName: route.target.upstreamName,
+                            verdict: 'pending_approval',
+                            obligation: decision.obligation,
+                            policy: decision,
+                            argsDigest: digestOf(params),
+                            redactionFindings: [],
+                            latencyMs: (this.now ? this.now() : Date.now()) - start,
+                            degraded: false
+                        };
+                        this.appendAudit(record);
                         throw new PolicyDeniedError(`getPrompt requires ${decision.obligation}`, { obligation: decision.obligation });
                     }
                 }
 
-                const outcome = await this.forwarder.forward(route.target, undefined);
-                return outcome.result;
+                const recordBase = {
+                    decisionId: newId('decision'),
+                    timestamp: isoTimestamp(start),
+                    agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
+                    protocolVersion: '2026-07-28',
+                    method: 'prompts/get',
+                    qualifiedName: params.name,
+                    serverId: route.target.serverId,
+                    upstreamName: route.target.upstreamName,
+                    verdict: 'allow' as const,
+                    obligation: decision?.obligation ?? 'allow',
+                    policy: decision ?? { effect: 'permit' as const, obligation: 'allow' as const, reasons: [], errors: [], defaultDeny: false },
+                    argsDigest: digestOf(params),
+                    redactionFindings: [],
+                    degraded: false
+                };
+    
+                this.appendAudit({
+                    ...recordBase,
+                    latencyMs: (this.now ? this.now() : Date.now()) - start,
+                });
+
+                try {
+                    const outcome = await this.forwarder.forward(route.target, undefined);
+                    return outcome.result;
+                } catch (error) {
+                    throw error;
+                }
             });
         }
 
@@ -438,6 +608,20 @@ export class SentinelServer {
         }
 
         return decision;
+    }
+
+    private appendAudit(record: DecisionRecord): void {
+        if (!this.auditStore) return;
+        try {
+            this.auditStore.append(record);
+        } catch (error) {
+            // Fail-closed semantics for audit writes.
+            throw {
+                code: -32001,
+                message: 'Audit write failed — request denied (fail-closed)',
+                data: { error: error instanceof Error ? error.message : String(error) }
+            };
+        }
     }
 }
 

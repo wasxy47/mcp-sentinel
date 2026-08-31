@@ -36,6 +36,7 @@
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/core": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
+    "better-sqlite3": "^12.11.1",
     "hono": "^4.13.3",
     "zod": "^4.4.3"
   }

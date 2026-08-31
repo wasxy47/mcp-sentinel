@@ -80,10 +80,10 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ## M3 — Audit trail
 
-- [ ] **M3.1 Hash-chained store** — SQLite schema, append path, WAL.
-- [ ] **M3.2 Verifier** — standalone chain verification, checkpoints,
+- [x] **M3.1 Hash-chained store** — SQLite schema, append path, WAL.
+- [x] **M3.2 Verifier** — standalone chain verification, checkpoints,
       tamper localisation.
-- [ ] **M3.3 Query API** — filtered reads backing the dashboard and the
+- [x] **M3.3 Query API** — filtered reads backing the dashboard and the
       `query_audit_log` tool.
 
 ## M4 — Risk engine

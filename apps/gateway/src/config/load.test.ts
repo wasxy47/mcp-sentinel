@@ -109,7 +109,7 @@ describe('parseConfig path resolution', () => {
 
         expect(config.workspaceRoot).toBe(resolve(BASE, 'workspace'));
         expect(config.policyDir).toBe(resolve(BASE, 'policies'));
-        expect(config.auditDb).toBe(resolve(BASE, 'data/audit.db'));
+        expect(config.auditDb).toBe(resolve(BASE, '.sentinel/audit.db'));
     });
 
     it('leaves absolute paths alone', () => {

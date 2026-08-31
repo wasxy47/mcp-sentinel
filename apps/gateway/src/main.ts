@@ -36,6 +36,9 @@ import { UpstreamRegistry } from './upstream/registry.js';
 import { ToolCatalog } from './catalog/catalog.js';
 import { SentinelServer } from './server/handlers.js';
 import { startHttpServer } from './server/http.js';
+import { AuditStore } from '@mcp-sentinel/audit';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const SERVER_INFO = { name: 'mcp-sentinel', version: '0.1.0' } as const;
 
@@ -125,8 +128,15 @@ async function main(): Promise<void> {
         });
     }
 
+    // ── Audit store ──────────────────────────────────────────────────────────────
+    const auditDir = path.dirname(config.auditDb);
+    if (!fs.existsSync(auditDir)) {
+        fs.mkdirSync(auditDir, { recursive: true });
+    }
+    const auditStore = new AuditStore(config.auditDb, logger);
+
     // ── Sentinel server ──────────────────────────────────────────────────────────
-    const sentinel = new SentinelServer({ config, registry, catalog, logger });
+    const sentinel = new SentinelServer({ config, registry, catalog, logger, auditStore });
 
     // ── HTTP server ──────────────────────────────────────────────────────────────
     const bound = await startHttpServer({ sentinel, settings: config.http, logger });
@@ -167,6 +177,14 @@ async function main(): Promise<void> {
             await registry.close();
         } catch (cause) {
             logger.warn('error closing upstream registry', {
+                error: cause instanceof Error ? cause.message : String(cause)
+            });
+        }
+
+        try {
+            auditStore.close();
+        } catch (cause) {
+            logger.warn('error closing audit store', {
                 error: cause instanceof Error ? cause.message : String(cause)
             });
         }

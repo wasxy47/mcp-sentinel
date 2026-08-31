@@ -12,6 +12,7 @@ dist/
 
 # Runtime data: audit database and the out-of-band checkpoint journal
 data/
+.sentinel/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
