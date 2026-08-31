@@ -124,7 +124,7 @@ unified tool catalog to agents.
 | **M3** | Hash-chained audit trail | SQLite WAL, tamper localisation |
 | **M4** | Risk scoring | Heuristic + optional LLM provider |
 | **M5** | Approval flow | Discord webhook, HMAC-signed links, task bridging |
-| **M6** | Server scanner | Tool poisoning, injection, drift detection |
+| **M6** | Server scanner | Tool poisoning, injection, drift detection, benchmark |
 | **M7** | Sentinel's own MCP tools | Wire up the governance tool stubs |
 | **M8** | Dashboard | Live SSE decision feed, chain verification |
 | **M9** | Demo & packaging | Docker Compose, before/after scripts |
