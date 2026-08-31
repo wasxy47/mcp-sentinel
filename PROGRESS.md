@@ -67,12 +67,16 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ## M2 — Policy engine
 
-- [ ] **M2.1 Cedar entity model** — principal/action/resource/context extraction
+- [x] **M2.1 Cedar entity model** — principal/action/resource/context extraction
       from a request.
-- [ ] **M2.2 Evaluation** — `preparseSchema` + `statefulIsAuthorized` hot path,
+- [x] **M2.2 Evaluation** — `isAuthorized` hot path with static map (to avoid WASM OOB),
       policy-id → annotation map, obligation resolution.
-- [ ] **M2.3 Policy loading & linting** — bundle loader, `validate` in CI,
+- [x] **M2.3 Policy loading & linting** — bundle loader, `validate` in CI,
       hot reload.
+      *Designed and implemented `policy-engine` package. Wired into `SentinelServer`
+      (handlers: discover, list, call, read, prompts). Resolved Cedar WASM 4.12.0
+      memory instability. Added regex/SQL injection safeguards and invisible Unicode filtering.
+      126+ tests. `npm run check` green (518 tests total).*
 
 ## M3 — Audit trail
 

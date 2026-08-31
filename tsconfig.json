@@ -3,5 +3,5 @@
     // walks these in dependency order. Each package is added here as it lands,
     // so the build stays green at every commit.
     "files": [],
-    "references": [{ "path": "./packages/mcp-core" }, { "path": "./apps/gateway" }]
+    "references": [{ "path": "./packages/mcp-core" }, { "path": "./packages/policy-engine" }, { "path": "./apps/gateway" }]
 }

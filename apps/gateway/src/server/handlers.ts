@@ -59,6 +59,16 @@ import { Forwarder } from '../forward/forwarder.js';
 import { ForwardRouter } from '../forward/route.js';
 import { isSentinelOwnTool, sentinelToolDefinitions } from './sentinel-tools.js';
 
+import type { PolicyEngine } from '@mcp-sentinel/policy-engine';
+import {
+    extractToolCallContext,
+    extractResourceReadContext,
+    extractBaseContext,
+    agentPrincipalFromIdentity,
+    toolResource,
+} from '@mcp-sentinel/policy-engine';
+import { PolicyDeniedError } from '@mcp-sentinel/mcp-core';
+
 /** The message every tasks/* stub returns. Searchable in logs and issues. */
 export const TASKS_DEFERRED_MESSAGE =
     'tasks/* subsystem is deferred to M5.5 (approval bridging). ' +
@@ -80,6 +90,8 @@ export interface SentinelServerDeps {
     readonly registry: UpstreamRegistry;
     readonly catalog: ToolCatalog;
     readonly logger: Logger;
+    /** Optional policy engine. If absent, evaluation is skipped (warns). */
+    readonly policyEngine?: PolicyEngine | undefined;
     /** Injectable clock. Tests must not depend on wall time. */
     readonly now?: () => number;
 }
@@ -98,6 +110,7 @@ export class SentinelServer {
     private readonly registry: UpstreamRegistry;
     private readonly catalog: ToolCatalog;
     private readonly logger: Logger;
+    private readonly policyEngine?: PolicyEngine;
     private readonly router: ForwardRouter;
     private readonly forwarder: Forwarder;
 
@@ -115,6 +128,13 @@ export class SentinelServer {
         this.registry = deps.registry;
         this.catalog = deps.catalog;
         this.logger = deps.logger;
+        if (deps.policyEngine) {
+            this.policyEngine = deps.policyEngine;
+        }
+
+        if (!this.policyEngine) {
+            this.logger.warn('SentinelServer starting without a PolicyEngine — all calls will bypass policy evaluation');
+        }
 
         this.router = new ForwardRouter({
             catalog: this.catalog,
@@ -127,8 +147,6 @@ export class SentinelServer {
             registry: this.registry,
             settings: this.config.forward,
             logger: this.logger,
-            // `exactOptionalPropertyTypes`: only spread `now` when it is defined
-            // so we never hand `undefined` to an `() => number` property.
             ...(deps.now === undefined ? {} : { now: deps.now })
         });
 
@@ -194,12 +212,14 @@ export class SentinelServer {
         // ── discovery ────────────────────────────────────────────────────────────
         // 2-arg form: SDK knows `server/discover` and types the response.
         server.setRequestHandler('server/discover', async _req => {
+            this.enforcePolicy('discover', { kind: 'endpoint' }, extractBaseContext('2026-07-28'));
             return buildDiscoverResult({ serverInfo, snapshots: this.registry.snapshots() });
         });
 
         // ── tool listing ─────────────────────────────────────────────────────────
         // 2-arg form: SDK knows `tools/list`.
         server.setRequestHandler('tools/list', async _req => {
+            this.enforcePolicy('listTools', { kind: 'endpoint' }, extractBaseContext('2026-07-28'));
             // Upstream tools come from the catalog, already in qualified form.
             // Sentinel's own tools are appended at the end, also in qualified form.
             return {
@@ -235,14 +255,41 @@ export class SentinelServer {
             }
 
             // Upstream tool: route and forward.
-            // M2 will insert policy evaluation between route and forward.
-            // M3 will add audit writes around the call.
             const metadata = buildInlineMetadata('tools/call', name);
             const route = this.router.route(metadata, { method: 'tools/call', params });
             if (route.kind !== 'forward') {
-                // Unreachable: `tools/call` is always a forward-or-error.
                 throw new Error('unexpected route kind for tools/call');
             }
+
+            // M2 policy evaluation
+            if (this.policyEngine) {
+                const entry = this.catalog.get(name);
+                if (!entry) {
+                    throw new ProtocolError(METHOD_NOT_FOUND, `tool ${name} not found`);
+                }
+                const snap = this.registry.snapshots().find(s => s.serverId === entry.serverId);
+                const trust = snap?.trust ?? 'untrusted';
+                
+                const resource = toolResource(entry, this.config.toolGroups, trust);
+                const context = extractToolCallContext(params.arguments, {
+                    workspaceRoot: this.config.workspaceRoot,
+                    allowedHosts: this.config.http.allowedOrigins, // using allowedOrigins as allowedHosts for now
+                    protocolVersion: '2026-07-28',
+                    serverTrust: trust,
+                    toolScanVerdict: entry.scan?.verdict ?? 'clean'
+                });
+
+                const decision = this.enforcePolicy('callTool', resource, context);
+                if (decision && decision.obligation !== 'allow') {
+                    // M4/M5 stub
+                    return {
+                        content: [{ type: 'text', text: `Call deferred: requires ${decision.obligation}. (M4/M5 functionality not yet implemented)` }],
+                        isError: true
+                    };
+                }
+            }
+
+            // M3 will add audit writes around the call.
             const outcome = await this.forwarder.forward(route.target, undefined);
             return outcome.result;
         });
@@ -256,6 +303,32 @@ export class SentinelServer {
                 if (route.kind !== 'forward') {
                     throw new Error('unexpected route kind for resources/read');
                 }
+
+                if (this.policyEngine) {
+                    const snap = this.registry.snapshots().find(s => s.serverId === route.target.serverId);
+                    const trust = snap?.trust ?? 'untrusted';
+                    const context = extractResourceReadContext(route.target.upstreamName, {
+                        workspaceRoot: this.config.workspaceRoot,
+                        allowedHosts: this.config.http.allowedOrigins,
+                        protocolVersion: '2026-07-28',
+                        serverTrust: trust,
+                        toolScanVerdict: 'clean'
+                    });
+                    const resource = {
+                        kind: 'mcp-resource' as const,
+                        qualifiedUri: params.uri,
+                        rawUri: route.target.upstreamName,
+                        serverId: route.target.serverId,
+                        serverTrust: trust,
+                        serverScanVerdict: snap?.health === 'ready' ? 'clean' : 'unknown',
+                        scheme: new URL(route.target.upstreamName).protocol.slice(0, -1)
+                    };
+                    const decision = this.enforcePolicy('readResource', resource, context);
+                    if (decision && decision.obligation !== 'allow') {
+                        throw new PolicyDeniedError(`readResource requires ${decision.obligation}`, { obligation: decision.obligation });
+                    }
+                }
+
                 const outcome = await this.forwarder.forward(route.target, undefined);
                 return outcome.result;
             });
@@ -270,6 +343,25 @@ export class SentinelServer {
                 if (route.kind !== 'forward') {
                     throw new Error('unexpected route kind for prompts/get');
                 }
+
+                if (this.policyEngine) {
+                    const snap = this.registry.snapshots().find(s => s.serverId === route.target.serverId);
+                    const trust = snap?.trust ?? 'untrusted';
+                    const resource = {
+                        kind: 'prompt' as const,
+                        qualifiedName: params.name,
+                        promptName: route.target.upstreamName,
+                        serverId: route.target.serverId,
+                        serverTrust: trust,
+                        serverScanVerdict: snap?.health === 'ready' ? 'clean' : 'unknown',
+                        promptScanVerdict: 'clean'
+                    };
+                    const decision = this.enforcePolicy('getPrompt', resource, extractBaseContext('2026-07-28'));
+                    if (decision && decision.obligation !== 'allow') {
+                        throw new PolicyDeniedError(`getPrompt requires ${decision.obligation}`, { obligation: decision.obligation });
+                    }
+                }
+
                 const outcome = await this.forwarder.forward(route.target, undefined);
                 return outcome.result;
             });
@@ -314,6 +406,38 @@ export class SentinelServer {
             ...(resources ? { resources: {} } : {}),
             ...(prompts ? { prompts: {} } : {})
         };
+    }
+
+    private enforcePolicy(
+        action: import('@mcp-sentinel/policy-engine').McpAction,
+        resource: import('@mcp-sentinel/policy-engine').PolicyResource,
+        context: import('@mcp-sentinel/policy-engine').PolicyContext
+    ) {
+        if (!this.policyEngine) return null;
+
+        // In M2, we use a fixed anonymous agent profile. Agent identity (JWT/mTLS)
+        // is out of scope.
+        const agent = agentPrincipalFromIdentity({
+            id: 'anonymous',
+            name: 'unknown',
+            trustTier: 'standard',
+            authenticated: false
+        });
+
+        const decision = this.policyEngine.evaluate({
+            principal: agent,
+            action,
+            resource,
+            context
+        });
+
+        if (decision.effect === 'forbid') {
+            const firstReason = decision.reasons.length > 0 ? decision.reasons[0] : undefined;
+            const reason = firstReason ? firstReason : 'Denied by policy';
+            throw new PolicyDeniedError(reason, { reasons: decision.reasons });
+        }
+
+        return decision;
     }
 }
 

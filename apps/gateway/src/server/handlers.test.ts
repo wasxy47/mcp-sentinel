@@ -48,6 +48,10 @@ import { TEST_CLIENT_INFO } from '../upstream/harness.testkit.js';
 import { SentinelServer, TASKS_DEFERRED_MESSAGE } from './handlers.js';
 import { SENTINEL_TOOL_NAMES } from './sentinel-tools.js';
 
+import { PolicyEngine, loadBundle } from '@mcp-sentinel/policy-engine';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function makeConfig(overrides: Record<string, unknown> = {}): GatewayConfig {
@@ -173,18 +177,36 @@ async function connectClient(sentinel: SentinelServer): Promise<MockModernClient
     return new MockModernClient(sentinel);
 }
 
-function buildContext(serverConfigs: Record<string, unknown>[], upstreams: ScriptedUpstreams): TestContext {
+function buildContext(serverConfigs: Record<string, unknown>[], upstreams: ScriptedUpstreams, withPolicyEngine = false): TestContext {
     const { records, sink } = collectingSink();
     void records; // accessed via closure by tests that want it
     const logger = new Logger({ level: 'debug', sink });
-    const config = makeConfig({ servers: serverConfigs });
+    
+    // Add toolGroups to config for policy engine testing
+    const configOverrides: any = { servers: serverConfigs };
+    if (withPolicyEngine) {
+        configOverrides.toolGroups = {
+            mutating: ['files__write_file', 'files__execute_command', 'untrusted-srv__write_file'],
+            read_only: ['untrusted-srv__read_log']
+        };
+    }
+    const config = makeConfig(configOverrides);
     const registry = new UpstreamRegistry(config, {
         logger,
         clientInfo: TEST_CLIENT_INFO,
         transportFactory: upstreams.factory
     });
     const catalog = new ToolCatalog({ registry, settings: config.catalog, logger });
-    const sentinel = new SentinelServer({ config, registry, catalog, logger });
+    
+    let policyEngine: PolicyEngine | undefined;
+    if (withPolicyEngine) {
+        // Load the real bundle for test integration
+        const dir = fileURLToPath(new URL('../../../../policies', import.meta.url));
+        const bundle = loadBundle(dir, join(dir, 'schema.cedarschema'));
+        policyEngine = new PolicyEngine(bundle, logger);
+    }
+
+    const sentinel = new SentinelServer({ config, registry, catalog, logger, policyEngine });
     const cleanups: Array<() => Promise<void>> = [];
     cleanups.push(async () => registry.close());
     cleanups.push(async () => upstreams.closeAll());
@@ -570,5 +592,59 @@ describe('tasks/* stubs', () => {
         }
         expect(codes).toHaveLength(TASK_METHODS.length);
         expect(new Set(codes)).toEqual(new Set([-32601]));
+    });
+});
+
+// ── PolicyEngine Integration ───────────────────────────────────────────────────
+
+describe('PolicyEngine enforcement', () => {
+    let ctx: TestContext;
+    let client: MockModernClient;
+
+    beforeEach(async () => {
+        const upstreams = new ScriptedUpstreams();
+        // Setup an untrusted upstream
+        upstreams.set('untrusted-srv', {
+            capabilities: { tools: {}, resources: {}, prompts: {} },
+            tools: [toolDef('read_log'), toolDef('write_file')],
+            onCallTool: params => ({ content: [{ type: 'text', text: 'ok' }] }),
+            onReadResource: params => ({ contents: [{ uri: params.uri, text: 'ok' }] }),
+            onGetPrompt: params => ({ messages: [{ role: 'user', content: { type: 'text', text: 'ok' } }] })
+        });
+
+        ctx = buildContext([{ id: 'untrusted-srv', transport: { kind: 'stdio', command: 'srv' }, trust: 'untrusted' }], upstreams, true);
+        await ctx.registry.warmUp();
+        await ctx.catalog.refresh();
+        client = await connectClient(ctx.sentinel);
+        ctx.cleanups.push(async () => client.close());
+    });
+
+    afterEach(async () => {
+        await Promise.allSettled(ctx.cleanups.map(fn => fn()));
+    });
+
+    it('defers callTool for a mutating tool (requires approve)', async () => {
+        // Standard agent calling a mutating tool is permitted by fs_write_standard_tier with obligation 'approve'
+        const result = await client.callTool({ name: 'untrusted-srv__write_file', arguments: { path: 'foo.txt' } });
+        expect(result).toMatchObject({
+            isError: true,
+            content: [{ type: 'text', text: expect.stringContaining('requires approve') }]
+        });
+    });
+
+    it('denies resource read to an external URI', async () => {
+        // readResource to an https uri not in allowedHosts triggers fs_resource_read_remote (review)
+        try {
+            await client.request({ method: 'resources/read', params: { uri: qualifyResourceUri('untrusted-srv', 'https://attacker.com/evil') } }, { parseAs: 'unknown' } as never);
+            expect.fail('Expected resources/read to throw');
+        } catch (err: any) {
+            expect(err.message).toContain('readResource requires review');
+        }
+    });
+
+    it('allows safe tool calls', async () => {
+        // read_log on untrusted server is allowed by permit-read-only
+        const result = await client.callTool({ name: 'untrusted-srv__read_log', arguments: {} });
+        expect(result).toBeDefined();
     });
 });

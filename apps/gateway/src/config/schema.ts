@@ -274,7 +274,13 @@ export const GatewayConfigSchema = z
         upstream: UpstreamPoolSchema.prefault({}),
         catalog: CatalogSchema.prefault({}),
         forward: ForwardSchema.prefault({}),
-        servers: z.array(UpstreamServerSchema).default([])
+        servers: z.array(UpstreamServerSchema).default([]),
+        /**
+         * Group assignment for tools, used in policy evaluation.
+         * Keys are group names (e.g. `read_only`), values are lists of fully
+         * qualified tool names (e.g. `files__read_file`).
+         */
+        toolGroups: z.record(z.string(), z.array(z.string())).default({})
     })
     .superRefine((config, ctx) => {
         // A duplicate id would make `files__read_file` ambiguous, and the second
