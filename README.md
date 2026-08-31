@@ -15,11 +15,11 @@ optionally held for human approval, and recorded in a tamper-evident audit
 trail — before being forwarded to the upstream server.
 
 ```
-┌─────────┐         ┌───────────────────────────────────────┐         ┌──────────┐
-│  Agent   │ ──MCP─▸ │              Sentinel                 │ ──MCP─▸ │ Upstream │
-│ (Claude, │         │  identify → policy → risk → approve → │         │  Server  │
-│  GPT, …) │         │  audit → forward                      │         │ (fs, db, │
-└─────────┘         └───────────────────────────────────────┘         │  git, …) │
+┌──────────┐        ┌────────────────────────────────────────┐        ┌──────────┐
+│  Agent   │ ──MCP─▸│              Sentinel                  │ ──MCP─▸│ Upstream │
+│ (Claude, │        │  identify → policy → risk → approve →  │        │  Server  │
+│  GPT, …) │        │  audit → forward                       │        │ (fs, db, │
+└──────────┘        └────────────────────────────────────────┘        │  git, …) │
                                                                       └──────────┘
 ```
 
