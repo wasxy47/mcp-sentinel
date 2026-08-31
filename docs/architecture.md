@@ -357,18 +357,18 @@ This is deliberately not "fail open". It also is not blanket fail-closed: an
 `allow` obligation means a policy author already made an explicit judgement, and
 a risk-engine outage should not revoke it.
 
-### 4.6 One provider abstraction for Ollama, Groq and xAI
+### 4.6 One provider abstraction for Ollama and Groq
 
-All three speak the OpenAI chat-completions wire format, so one
+All two speak the OpenAI chat-completions wire format, so one
 `OpenAICompatibleProvider` — parameterised by base URL, model and API key —
-covers local Ollama, Groq and xAI with no code change, which the brief requires.
+covers local Ollama and Groq with no code change, which the brief requires.
 Selection is environment-driven:
 
 ```
-SENTINEL_RISK_PROVIDER=ollama|groq|xai|heuristic
+SENTINEL_RISK_PROVIDER=ollama|groq|heuristic
 SENTINEL_RISK_BASE_URL=...      # defaulted per provider
 SENTINEL_RISK_MODEL=...
-GROQ_API_KEY / XAI_API_KEY      # read from the environment, never from a file
+GROQ_API_KEY                    # read from the environment, never from a file
 ```
 
 Two properties make the LLM safe to depend on:

@@ -85,7 +85,7 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 ## M4 — Risk engine
 
 - [ ] **M4.1 Provider abstraction** — one OpenAI-compatible client covering
-      Ollama, Groq and xAI; strict JSON-schema structured output.
+      Ollama and Groq; strict JSON-schema structured output.
 - [ ] **M4.2 Heuristic scorer** — deterministic signals, always runs, works
       offline.
 - [ ] **M4.3 Escalation policy** — timeouts, caching, and the
