@@ -37,6 +37,7 @@ import { ToolCatalog } from './catalog/catalog.js';
 import { SentinelServer } from './server/handlers.js';
 import { startHttpServer } from './server/http.js';
 import { AuditStore } from '@mcp-sentinel/audit';
+import { RiskEngine, GroqProvider, OllamaProvider } from '@mcp-sentinel/risk-engine';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -135,8 +136,30 @@ async function main(): Promise<void> {
     }
     const auditStore = new AuditStore(config.auditDb, logger);
 
+    // ── Risk Engine ──────────────────────────────────────────────────────────────
+    let llmProvider;
+    if (config.risk.provider) {
+        if (config.risk.provider.kind === 'groq') {
+            // resolve env: prefix
+            const apiKeyRef = config.risk.provider.apiKey;
+            const apiKey = apiKeyRef.startsWith('env:') ? process.env[apiKeyRef.slice(4)] : apiKeyRef;
+            if (!apiKey) {
+                logger.warn('Groq API key not found in environment, LLM evaluation will fail', { key: apiKeyRef });
+            }
+            llmProvider = new GroqProvider(apiKey ?? '', config.risk.provider.model);
+        } else if (config.risk.provider.kind === 'ollama') {
+            llmProvider = new OllamaProvider(config.risk.provider.url, config.risk.provider.model);
+        }
+    }
+    const riskEngine = new RiskEngine(llmProvider, {
+        heuristicOnly: config.risk.heuristicOnly,
+        llmTimeoutMs: config.risk.llmTimeoutMs,
+        escalationThreshold: config.risk.escalationThreshold,
+        escalateObligation: config.risk.escalateObligation
+    });
+
     // ── Sentinel server ──────────────────────────────────────────────────────────
-    const sentinel = new SentinelServer({ config, registry, catalog, logger, auditStore });
+    const sentinel = new SentinelServer({ config, registry, catalog, logger, auditStore, riskEngine });
 
     // ── HTTP server ──────────────────────────────────────────────────────────────
     const bound = await startHttpServer({ sentinel, settings: config.http, logger });

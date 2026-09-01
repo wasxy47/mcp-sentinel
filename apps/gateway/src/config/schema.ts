@@ -255,6 +255,40 @@ export const HttpSchema = z.object({
     maxBodyBytes: z.number().int().positive().max(67_108_864).default(4_194_304)
 });
 
+const ProviderConfigSchema = z.discriminatedUnion('kind', [
+    z.object({
+        kind: z.literal('groq'),
+        /** The API key to use. Follows the `env:` prefix pattern. */
+        apiKey: z.string().startsWith('env:'),
+        model: z.string().default('llama-3.1-8b-instant')
+    }),
+    z.object({
+        kind: z.literal('ollama'),
+        url: z.url().default('http://localhost:11434'),
+        model: z.string().default('llama3.1')
+    })
+]);
+
+const RiskSchema = z.object({
+    /** Disable LLM checks completely, relying only on heuristics. */
+    heuristicOnly: z.boolean().default(false),
+    
+    /** 
+     * Time to wait for the LLM before timing out. 
+     * If it times out, the engine escalates-then-denies.
+     */
+    llmTimeoutMs: z.number().int().positive().default(5000),
+    
+    /** The risk score (0-100) at which the obligation is escalated. */
+    escalationThreshold: z.number().int().min(0).max(100).default(80),
+    
+    /** The obligation to escalate to when the risk score exceeds the threshold. */
+    escalateObligation: z.enum(['allow', 'review', 'approve']).default('approve'),
+    
+    /** Optional LLM provider configuration. If omitted, uses heuristics only. */
+    provider: ProviderConfigSchema.optional()
+});
+
 export const GatewayConfigSchema = z
     .object({
         /** Identity Sentinel reports to upstreams, and to agents in discovery. */
@@ -274,6 +308,7 @@ export const GatewayConfigSchema = z
         upstream: UpstreamPoolSchema.prefault({}),
         catalog: CatalogSchema.prefault({}),
         forward: ForwardSchema.prefault({}),
+        risk: RiskSchema.prefault({}),
         servers: z.array(UpstreamServerSchema).default([]),
         /**
          * Group assignment for tools, used in policy evaluation.
@@ -305,4 +340,5 @@ export type UpstreamPoolSettings = z.output<typeof UpstreamPoolSchema>;
 export type CatalogSettings = z.output<typeof CatalogSchema>;
 export type ForwardSettings = z.output<typeof ForwardSchema>;
 export type HttpSettings = z.output<typeof HttpSchema>;
+export type RiskSettings = z.output<typeof RiskSchema>;
 export type GatewayConfig = z.output<typeof GatewayConfigSchema>;

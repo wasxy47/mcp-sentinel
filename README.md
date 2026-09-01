@@ -2,7 +2,7 @@
 
 > ⚠️ **Status: Active Development**
 > Sentinel is currently under active development.
-> We have completed M3 (Hash-chained audit trail) and are beginning work on M4 (Risk engine).
+> We have completed M4 (Risk Engine) and are beginning work on M5 (Approval flow).
 > See [PROGRESS.md](PROGRESS.md) for detailed milestone tracking.
 
 **Security and governance gateway for AI agents using the
@@ -30,7 +30,7 @@ trail — before being forwarded to the upstream server.
 | **Passthrough gateway** | Connects to upstream MCP servers, aggregates their tool catalogs under namespaced names (`server__tool`), forwards calls with header/body re-assertion | ✅ Done (M1) |
 | **Policy engine** | Evaluates a Cedar policy bundle against every action. Resources are extracted by deeply inspecting `tools/call` arguments (e.g., catching `../` directory traversal in a path parameter) | ✅ Done (M2) |
 | **Audit trail** | Records an unalterable, cryptographically hash-chained log of every decision and its exact context (RFC 8785) into a tamper-evident SQLite store | ✅ Done (M3) |
-| **Risk scoring** | Heuristic + optional LLM-based risk assessment for escalation decisions | Planned (M4) |
+| **Risk scoring** | Heuristic + optional LLM-based risk assessment for escalation decisions | ✅ Done (M4) |
 | **Approval flow** | Suspend dangerous calls, notify via Discord, resume on human approval | Planned (M5) |
 | **Server scanner** | Detect tool poisoning, invisible Unicode, definition drift, injection | Planned (M6) |
 | **Governance tools** | MCP tools the agent can call: `explain_decision`, `query_audit_log`, `list_active_policies`, `verify_audit_chain`, `approve_request` | Planned (M7) |

@@ -75,6 +75,7 @@ import {
     type DecisionRecord
 } from '@mcp-sentinel/mcp-core';
 import type { AuditStore, AuditWriteError } from '@mcp-sentinel/audit';
+import type { RiskEngine } from '@mcp-sentinel/risk-engine';
 
 /** The message every tasks/* stub returns. Searchable in logs and issues. */
 export const TASKS_DEFERRED_MESSAGE =
@@ -101,6 +102,8 @@ export interface SentinelServerDeps {
     readonly policyEngine?: PolicyEngine | undefined;
     /** Optional audit store. If absent, audit logging is skipped (warns). */
     readonly auditStore?: AuditStore | undefined;
+    /** Optional risk engine. If absent, risk is not evaluated. */
+    readonly riskEngine?: RiskEngine | undefined;
     /** Injectable clock. Tests must not depend on wall time. */
     readonly now?: () => number;
 }
@@ -121,6 +124,7 @@ export class SentinelServer {
     private readonly logger: Logger;
     private readonly policyEngine?: PolicyEngine;
     private readonly auditStore?: AuditStore;
+    private readonly riskEngine?: RiskEngine;
     private readonly now?: () => number;
     private readonly router: ForwardRouter;
     private readonly forwarder: Forwarder;
@@ -144,6 +148,9 @@ export class SentinelServer {
         }
         if (deps.auditStore) {
             this.auditStore = deps.auditStore;
+        }
+        if (deps.riskEngine) {
+            this.riskEngine = deps.riskEngine;
         }
         if (deps.now) {
             this.now = deps.now;
@@ -304,34 +311,43 @@ export class SentinelServer {
                 });
 
                 decision = this.enforcePolicy('callTool', resource, context);
+            }
+
+            let risk;
+            let finalObligation = decision?.obligation ?? 'allow';
+
+            if (this.riskEngine && decision?.effect !== 'forbid') {
+                risk = await this.riskEngine.evaluate('tools/call', name, params.arguments);
+                finalObligation = this.riskEngine.escalateObligation(finalObligation, risk);
+            }
+
+            if (finalObligation !== 'allow') {
+                // Record deferred decision in audit
+                const record: DecisionRecord = {
+                    decisionId: newId('decision'),
+                    timestamp: isoTimestamp(start),
+                    agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
+                    protocolVersion: '2026-07-28',
+                    method: 'tools/call',
+                    qualifiedName: name,
+                    ...(this.catalog.get(name)?.serverId ? { serverId: this.catalog.get(name)!.serverId } : {}),
+                    ...(this.catalog.get(name)?.toolName ? { upstreamName: this.catalog.get(name)!.toolName } : {}),
+                    verdict: 'pending_approval',
+                    obligation: finalObligation,
+                    policy: decision ?? { effect: 'permit' as const, obligation: 'allow' as const, reasons: [], errors: [], defaultDeny: false },
+                    ...(risk ? { risk } : {}),
+                    argsDigest: digestOf(params.arguments),
+                    redactionFindings: [], // TODO: redact
+                    latencyMs: (this.now ? this.now() : Date.now()) - start,
+                    degraded: false
+                };
+                this.appendAudit(record);
                 
-                if (decision && decision.obligation !== 'allow') {
-                    // Record deferred decision in audit
-                    const record: DecisionRecord = {
-                        decisionId: newId('decision'),
-                        timestamp: isoTimestamp(start),
-                        agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
-                        protocolVersion: '2026-07-28',
-                        method: 'tools/call',
-                        qualifiedName: name,
-                        serverId: entry.serverId,
-                        upstreamName: entry.toolName,
-                        verdict: 'pending_approval',
-                        obligation: decision.obligation,
-                        policy: decision,
-                        argsDigest: digestOf(params.arguments),
-                        redactionFindings: [], // TODO: redact
-                        latencyMs: (this.now ? this.now() : Date.now()) - start,
-                        degraded: false
-                    };
-                    this.appendAudit(record);
-                    
-                    // M4/M5 stub
-                    return {
-                        content: [{ type: 'text', text: `Call deferred: requires ${decision.obligation}. (M4/M5 functionality not yet implemented)` }],
-                        isError: true
-                    };
-                }
+                // M4/M5 stub
+                return {
+                    content: [{ type: 'text', text: `Call deferred: requires ${finalObligation}. (M4/M5 functionality not yet implemented)` }],
+                    isError: true
+                };
             }
 
             // M3: Upstream tool: route and forward, with audit wrap
@@ -346,10 +362,11 @@ export class SentinelServer {
                 method: 'tools/call',
                 qualifiedName: name,
                 ...(serverId !== undefined ? { serverId } : {}),
-                ...(upstreamName !== undefined ? { upstreamName } : {}),
+                ...(this.catalog.get(name)?.toolName ? { upstreamName: this.catalog.get(name)!.toolName } : {}),
                 verdict: 'allow' as const,
-                obligation: decision?.obligation ?? 'allow',
+                obligation: finalObligation,
                 policy: decision ?? { effect: 'permit' as const, obligation: 'allow' as const, reasons: [], errors: [], defaultDeny: false },
+                ...(risk ? { risk } : {}),
                 argsDigest: digestOf(params.arguments),
                 redactionFindings: [],
                 degraded: false
@@ -402,28 +419,38 @@ export class SentinelServer {
                         scheme: new URL(route.target.upstreamName).protocol.slice(0, -1)
                     };
                     decision = this.enforcePolicy('readResource', resource, context);
-                    if (decision && decision.obligation !== 'allow') {
-                        // Record deferred decision in audit
-                        const record: DecisionRecord = {
-                            decisionId: newId('decision'),
-                            timestamp: isoTimestamp(start),
-                            agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
-                            protocolVersion: '2026-07-28',
-                            method: 'resources/read',
-                            qualifiedName: params.uri,
-                            serverId: route.target.serverId,
-                            upstreamName: route.target.upstreamName,
-                            verdict: 'pending_approval',
-                            obligation: decision.obligation,
-                            policy: decision,
-                            argsDigest: digestOf(params),
-                            redactionFindings: [],
-                            latencyMs: (this.now ? this.now() : Date.now()) - start,
-                            degraded: false
-                        };
-                        this.appendAudit(record);
-                        throw new PolicyDeniedError(`readResource requires ${decision.obligation}`, { obligation: decision.obligation });
-                    }
+                }
+
+                let risk;
+                let finalObligation = decision?.obligation ?? 'allow';
+
+                if (this.riskEngine && decision?.effect !== 'forbid') {
+                    risk = await this.riskEngine.evaluate('resources/read', params.uri, params);
+                    finalObligation = this.riskEngine.escalateObligation(finalObligation, risk);
+                }
+
+                if (finalObligation !== 'allow') {
+                    // Record deferred decision in audit
+                    const record: DecisionRecord = {
+                        decisionId: newId('decision'),
+                        timestamp: isoTimestamp(start),
+                        agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
+                        protocolVersion: '2026-07-28',
+                        method: 'resources/read',
+                        qualifiedName: params.uri,
+                        serverId: route.target.serverId,
+                        upstreamName: route.target.upstreamName,
+                        verdict: 'pending_approval',
+                        obligation: finalObligation,
+                        policy: decision ?? { effect: 'permit' as const, obligation: 'allow' as const, reasons: [], errors: [], defaultDeny: false },
+                        ...(risk ? { risk } : {}),
+                        argsDigest: digestOf(params),
+                        redactionFindings: [],
+                        latencyMs: (this.now ? this.now() : Date.now()) - start,
+                        degraded: false
+                    };
+                    this.appendAudit(record);
+                    throw new PolicyDeniedError(`readResource requires ${finalObligation}`, { obligation: finalObligation });
                 }
 
                 const recordBase = {
@@ -436,8 +463,9 @@ export class SentinelServer {
                     serverId: route.target.serverId,
                     upstreamName: route.target.upstreamName,
                     verdict: 'allow' as const,
-                    obligation: decision?.obligation ?? 'allow',
+                    obligation: finalObligation,
                     policy: decision ?? { effect: 'permit' as const, obligation: 'allow' as const, reasons: [], errors: [], defaultDeny: false },
+                    ...(risk ? { risk } : {}),
                     argsDigest: digestOf(params),
                     redactionFindings: [],
                     degraded: false
@@ -482,28 +510,38 @@ export class SentinelServer {
                         promptScanVerdict: 'clean'
                     };
                     decision = this.enforcePolicy('getPrompt', resource, extractBaseContext('2026-07-28'));
-                    if (decision && decision.obligation !== 'allow') {
-                        // Record deferred decision in audit
-                        const record: DecisionRecord = {
-                            decisionId: newId('decision'),
-                            timestamp: isoTimestamp(start),
-                            agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
-                            protocolVersion: '2026-07-28',
-                            method: 'prompts/get',
-                            qualifiedName: params.name,
-                            serverId: route.target.serverId,
-                            upstreamName: route.target.upstreamName,
-                            verdict: 'pending_approval',
-                            obligation: decision.obligation,
-                            policy: decision,
-                            argsDigest: digestOf(params),
-                            redactionFindings: [],
-                            latencyMs: (this.now ? this.now() : Date.now()) - start,
-                            degraded: false
-                        };
-                        this.appendAudit(record);
-                        throw new PolicyDeniedError(`getPrompt requires ${decision.obligation}`, { obligation: decision.obligation });
-                    }
+                }
+
+                let risk;
+                let finalObligation = decision?.obligation ?? 'allow';
+
+                if (this.riskEngine && decision?.effect !== 'forbid') {
+                    risk = await this.riskEngine.evaluate('prompts/get', params.name, params);
+                    finalObligation = this.riskEngine.escalateObligation(finalObligation, risk);
+                }
+
+                if (finalObligation !== 'allow') {
+                    // Record deferred decision in audit
+                    const record: DecisionRecord = {
+                        decisionId: newId('decision'),
+                        timestamp: isoTimestamp(start),
+                        agent: agentPrincipalFromIdentity({ id: 'anonymous', name: 'unknown', trustTier: 'standard', authenticated: false }),
+                        protocolVersion: '2026-07-28',
+                        method: 'prompts/get',
+                        qualifiedName: params.name,
+                        serverId: route.target.serverId,
+                        upstreamName: route.target.upstreamName,
+                        verdict: 'pending_approval',
+                        obligation: finalObligation,
+                        policy: decision ?? { effect: 'permit' as const, obligation: 'allow' as const, reasons: [], errors: [], defaultDeny: false },
+                        ...(risk ? { risk } : {}),
+                        argsDigest: digestOf(params),
+                        redactionFindings: [],
+                        latencyMs: (this.now ? this.now() : Date.now()) - start,
+                        degraded: false
+                    };
+                    this.appendAudit(record);
+                    throw new PolicyDeniedError(`getPrompt requires ${finalObligation}`, { obligation: finalObligation });
                 }
 
                 const recordBase = {
@@ -516,8 +554,9 @@ export class SentinelServer {
                     serverId: route.target.serverId,
                     upstreamName: route.target.upstreamName,
                     verdict: 'allow' as const,
-                    obligation: decision?.obligation ?? 'allow',
+                    obligation: finalObligation,
                     policy: decision ?? { effect: 'permit' as const, obligation: 'allow' as const, reasons: [], errors: [], defaultDeny: false },
+                    ...(risk ? { risk } : {}),
                     argsDigest: digestOf(params),
                     redactionFindings: [],
                     degraded: false
