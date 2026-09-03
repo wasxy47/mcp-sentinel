@@ -430,11 +430,11 @@ describe('tools/call — sentinel own tools (stub responses)', () => {
     });
 
     for (const [toolKey, toolName] of Object.entries(SENTINEL_TOOL_NAMES) as [string, string][]) {
+        if (toolKey === 'approveRequest') continue; // approve_request has its own test below
         it(`${toolName} returns isError:true with a "not implemented" message`, async () => {
             const args: Record<string, unknown> = {};
             // Provide required arguments for tools that need them.
             if (toolKey === 'explainDecision') args['decisionId'] = 'dec_01HN000000000000000000000';
-            if (toolKey === 'approveRequest') args['token'] = 'dummy-token';
 
             const result = await client.callTool({ name: toolName, arguments: args });
             expect(result.isError).toBe(true);
@@ -443,6 +443,16 @@ describe('tools/call — sentinel own tools (stub responses)', () => {
             expect(textContent?.text).toContain('M7');
         });
     }
+
+    it('sentinel__approve_request returns isError when approval system is not configured', async () => {
+        const result = await client.callTool({
+            name: SENTINEL_TOOL_NAMES.approveRequest,
+            arguments: { token: 'dummy-token' }
+        });
+        expect(result.isError).toBe(true);
+        const textContent = result.content.find(c => c.type === 'text');
+        expect(textContent?.text).toContain('not configured');
+    });
 });
 
 // ── resources/read ────────────────────────────────────────────────────────────
@@ -624,12 +634,15 @@ describe('PolicyEngine enforcement', () => {
     });
 
     it('defers callTool for a mutating tool (requires approve)', async () => {
-        // Standard agent calling a mutating tool is permitted by fs_write_standard_tier with obligation 'approve'
-        const result = await client.callTool({ name: 'untrusted-srv__write_file', arguments: { path: 'foo.txt' } });
-        expect(result).toMatchObject({
-            isError: true,
-            content: [{ type: 'text', text: expect.stringContaining('requires approve') }]
-        });
+        // Standard agent calling a mutating tool is permitted by fs_write_standard_tier with obligation 'approve'.
+        // Without approvalStore configured, the handler throws ProtocolError -32001.
+        try {
+            await client.callTool({ name: 'untrusted-srv__write_file', arguments: { path: 'foo.txt' } });
+            expect.fail('Expected callTool to throw');
+        } catch (err: any) {
+            expect(err.code).toBe(-32001);
+            expect(err.message).toContain('requires approve');
+        }
     });
 
     it('denies resource read to an external URI', async () => {

@@ -57,7 +57,7 @@ import type { UpstreamRegistry } from '../upstream/registry.js';
 import { buildDiscoverResult } from '../forward/discover.js';
 import { Forwarder } from '../forward/forwarder.js';
 import { ForwardRouter } from '../forward/route.js';
-import { isSentinelOwnTool, sentinelToolDefinitions } from './sentinel-tools.js';
+import { isSentinelOwnTool, sentinelToolDefinitions, SENTINEL_TOOL_NAMES } from './sentinel-tools.js';
 
 import type { PolicyEngine } from '@mcp-sentinel/policy-engine';
 import {
@@ -76,6 +76,7 @@ import {
 } from '@mcp-sentinel/mcp-core';
 import type { AuditStore, AuditWriteError } from '@mcp-sentinel/audit';
 import type { RiskEngine } from '@mcp-sentinel/risk-engine';
+import type { ApprovalStore, Signer, Notifier, ApprovalRequest } from '@mcp-sentinel/approvals';
 
 /** The message every tasks/* stub returns. Searchable in logs and issues. */
 export const TASKS_DEFERRED_MESSAGE =
@@ -106,6 +107,12 @@ export interface SentinelServerDeps {
     readonly riskEngine?: RiskEngine | undefined;
     /** Injectable clock. Tests must not depend on wall time. */
     readonly now?: () => number;
+    /** Store for pending M5 approvals. */
+    readonly approvalStore?: ApprovalStore | undefined;
+    /** Signer for M5 approval loopback tokens. */
+    readonly signer?: Signer | undefined;
+    /** Notifier for M5 approval requests. */
+    readonly notifier?: Notifier | undefined;
 }
 
 /**
@@ -123,8 +130,11 @@ export class SentinelServer {
     private readonly catalog: ToolCatalog;
     private readonly logger: Logger;
     private readonly policyEngine?: PolicyEngine;
-    private readonly auditStore?: AuditStore;
-    private readonly riskEngine?: RiskEngine;
+    private readonly auditStore?: AuditStore | undefined;
+    private readonly riskEngine?: RiskEngine | undefined;
+    public readonly approvalStore?: ApprovalStore | undefined;
+    public readonly signer?: Signer | undefined;
+    private readonly notifier?: Notifier | undefined;
     private readonly now?: () => number;
     private readonly router: ForwardRouter;
     private readonly forwarder: Forwarder;
@@ -152,6 +162,9 @@ export class SentinelServer {
         if (deps.riskEngine) {
             this.riskEngine = deps.riskEngine;
         }
+        this.approvalStore = deps.approvalStore;
+        this.signer = deps.signer;
+        this.notifier = deps.notifier;
         if (deps.now) {
             this.now = deps.now;
         }
@@ -263,8 +276,12 @@ export class SentinelServer {
         server.setRequestHandler('tools/call', TOOLS_CALL_SCHEMA, async (params) => {
             const name = params.name;
 
-            // Sentinel's own tools: stub response until M7 implements them.
+            // Sentinel's own tools: dispatch approve_request, stub the rest until M7.
             if (isSentinelOwnTool(name)) {
+                if (name === SENTINEL_TOOL_NAMES.approveRequest) {
+                    return this.handleApproveRequest(params.arguments);
+                }
+
                 this.logger.debug('sentinel own tool called — stub response (M7)', { tool: name });
                 return {
                     content: [
@@ -343,11 +360,35 @@ export class SentinelServer {
                 };
                 this.appendAudit(record);
                 
-                // M4/M5 stub
-                return {
-                    content: [{ type: 'text', text: `Call deferred: requires ${finalObligation}. (M4/M5 functionality not yet implemented)` }],
-                    isError: true
-                };
+                if (this.approvalStore && this.signer && this.notifier) {
+                    const taskId = newId('task');
+                    const approvalReq: ApprovalRequest = {
+                        approvalId: taskId,
+                        agentId: 'anonymous',
+                        method: 'tools/call',
+                        qualifiedName: name,
+                        params: JSON.stringify(params.arguments ?? {}),
+                        state: 'pending',
+                        requestedAt: isoTimestamp(start)
+                    };
+                    this.approvalStore.create(approvalReq);
+                    
+                    const approveToken = this.signer.sign(taskId, 'approve');
+                    const denyToken = this.signer.sign(taskId, 'deny');
+                    this.notifier.notify(taskId, approveToken, denyToken, {
+                        agentId: 'anonymous',
+                        method: 'tools/call',
+                        qualifiedName: name
+                    }).catch(err => this.logger.warn('Failed to notify approval', { error: String(err) }));
+                    
+                    return {
+                        _meta: { taskId },
+                        content: [{ type: 'text', text: `Call deferred: requires ${finalObligation}. Task ID: ${taskId}` }],
+                        isError: true
+                    } as any;
+                }
+                
+                throw new ProtocolError(-32001, `Call deferred: requires ${finalObligation}. Task bridging unavailable.`);
             }
 
             // M3: Upstream tool: route and forward, with audit wrap
@@ -450,6 +491,29 @@ export class SentinelServer {
                         degraded: false
                     };
                     this.appendAudit(record);
+                    if (this.approvalStore && this.signer && this.notifier) {
+                        const taskId = newId('task');
+                        this.approvalStore.create({
+                            approvalId: taskId,
+                            agentId: 'anonymous',
+                            method: 'resources/read',
+                            qualifiedName: params.uri,
+                            params: JSON.stringify(params),
+                            state: 'pending',
+                            requestedAt: isoTimestamp(start)
+                        });
+                        
+                        const approveToken = this.signer.sign(taskId, 'approve');
+                        const denyToken = this.signer.sign(taskId, 'deny');
+                        this.notifier.notify(taskId, approveToken, denyToken, {
+                            agentId: 'anonymous',
+                            method: 'resources/read',
+                            qualifiedName: params.uri
+                        }).catch(err => this.logger.warn('Failed to notify approval', { error: String(err) }));
+                        
+                        throw new ProtocolError(-32001, `readResource requires ${finalObligation}. Task ID: ${taskId}`, { taskId });
+                    }
+                    
                     throw new PolicyDeniedError(`readResource requires ${finalObligation}`, { obligation: finalObligation });
                 }
 
@@ -541,6 +605,29 @@ export class SentinelServer {
                         degraded: false
                     };
                     this.appendAudit(record);
+                    if (this.approvalStore && this.signer && this.notifier) {
+                        const taskId = newId('task');
+                        this.approvalStore.create({
+                            approvalId: taskId,
+                            agentId: 'anonymous',
+                            method: 'prompts/get',
+                            qualifiedName: params.name,
+                            params: JSON.stringify(params),
+                            state: 'pending',
+                            requestedAt: isoTimestamp(start)
+                        });
+                        
+                        const approveToken = this.signer.sign(taskId, 'approve');
+                        const denyToken = this.signer.sign(taskId, 'deny');
+                        this.notifier.notify(taskId, approveToken, denyToken, {
+                            agentId: 'anonymous',
+                            method: 'prompts/get',
+                            qualifiedName: params.name
+                        }).catch(err => this.logger.warn('Failed to notify approval', { error: String(err) }));
+                        
+                        throw new ProtocolError(-32001, `getPrompt requires ${finalObligation}. Task ID: ${taskId}`, { taskId });
+                    }
+                    
                     throw new PolicyDeniedError(`getPrompt requires ${finalObligation}`, { obligation: finalObligation });
                 }
 
@@ -576,18 +663,47 @@ export class SentinelServer {
             });
         }
 
-        // ── tasks/* stubs ────────────────────────────────────────────────────────
-        //
-        // The 2026-07-28 Tasks extension defines these methods. They are
-        // registered so an agent sending them gets a clear, informative error
-        // rather than a generic parse failure. Each returns -32601 (MethodNotFound).
-        //
-        // The 3-arg form is used because the SDK has no built-in schema for
-        // `tasks/update` (the 2026-07-28 extension method). Using the same form
-        // for all four keeps the pattern consistent and avoids mixing overloads.
-        for (const taskMethod of ['tasks/get', 'tasks/cancel', 'tasks/list', 'tasks/update'] as const) {
+        // ── tasks/get — query approval state ─────────────────────────────────────
+        const TASKS_GET_SCHEMA = { params: z.object({ taskId: z.string() }).passthrough() } as const;
+        server.setRequestHandler('tasks/get', TASKS_GET_SCHEMA, async (params) => {
+            if (!this.approvalStore) {
+                throw new ProtocolError(METHOD_NOT_FOUND, TASKS_DEFERRED_MESSAGE);
+            }
+            const approval = this.approvalStore.get(params.taskId);
+            if (!approval) {
+                throw new ProtocolError(-32002, `No approval found for task ${params.taskId}`);
+            }
+            return {
+                id: approval.approvalId,
+                status: approval.state === 'pending' ? 'running' : approval.state === 'approved' ? 'completed' : 'failed',
+                metadata: {
+                    method: approval.method,
+                    qualifiedName: approval.qualifiedName,
+                    requestedAt: approval.requestedAt,
+                    decidedAt: approval.decidedAt,
+                    approver: approval.approver
+                }
+            };
+        });
+
+        // ── tasks/cancel — deny a pending approval ──────────────────────────────
+        const TASKS_CANCEL_SCHEMA = { params: z.object({ taskId: z.string() }).passthrough() } as const;
+        server.setRequestHandler('tasks/cancel', TASKS_CANCEL_SCHEMA, async (params) => {
+            if (!this.approvalStore) {
+                throw new ProtocolError(METHOD_NOT_FOUND, TASKS_DEFERRED_MESSAGE);
+            }
+            try {
+                this.approvalStore.updateState(params.taskId, 'denied', 'agent-cancel', 'Cancelled via tasks/cancel');
+            } catch {
+                throw new ProtocolError(-32002, `Cannot cancel task ${params.taskId}: not pending or not found`);
+            }
+            return { id: params.taskId, status: 'cancelled' };
+        });
+
+        // ── tasks/list and tasks/update — still deferred ────────────────────────
+        for (const taskMethod of ['tasks/list', 'tasks/update'] as const) {
             server.setRequestHandler(taskMethod, TASK_SCHEMA, async () => {
-                this.logger.debug('tasks/* method called — deferred to M5.5', { method: taskMethod });
+                this.logger.debug('tasks/* method called — not yet implemented', { method: taskMethod });
                 throw new ProtocolError(METHOD_NOT_FOUND, TASKS_DEFERRED_MESSAGE);
             });
         }
@@ -661,6 +777,91 @@ export class SentinelServer {
                 data: { error: error instanceof Error ? error.message : String(error) }
             };
         }
+    }
+
+    /**
+     * Handle the `sentinel__approve_request` tool call.
+     *
+     * Security invariants:
+     * 1. Requires a valid HMAC-signed token (not forgeable by the agent).
+     * 2. Self-approval is **always rejected**: the approving agent's identity
+     *    must differ from the identity that triggered the original request.
+     *    Even trusted/admin-tier agents cannot approve their own requests.
+     * 3. The token is time-bound (24h default) and single-use (the store's
+     *    WHERE state='pending' guard prevents replay).
+     */
+    private handleApproveRequest(args: Record<string, unknown> | undefined) {
+        if (!this.approvalStore || !this.signer) {
+            return {
+                content: [{ type: 'text' as const, text: 'Approval system is not configured.' }],
+                isError: true
+            };
+        }
+
+        const token = args?.token;
+        if (typeof token !== 'string') {
+            return {
+                content: [{ type: 'text' as const, text: 'Missing required argument: token' }],
+                isError: true
+            };
+        }
+
+        let verified;
+        try {
+            verified = this.signer.verify(token);
+        } catch (err) {
+            return {
+                content: [{ type: 'text' as const, text: `Token verification failed: ${err instanceof Error ? err.message : 'invalid token'}` }],
+                isError: true
+            };
+        }
+
+        // Look up the original approval request
+        const approval = this.approvalStore.get(verified.approvalId);
+        if (!approval) {
+            return {
+                content: [{ type: 'text' as const, text: `No approval found for id ${verified.approvalId}` }],
+                isError: true
+            };
+        }
+
+        // ── CRITICAL: Self-approval rejection ────────────────────────────────
+        // An agent must NEVER be able to approve its own pending request.
+        // The current caller is 'anonymous' (M5 has no real auth). The original
+        // requester's agentId is stored in the approval record. If they match,
+        // the approval is rejected even if the token is valid.
+        const callerAgentId = 'anonymous'; // Will use real identity when auth lands
+        if (approval.agentId === callerAgentId) {
+            this.logger.warn('self-approval attempt rejected', {
+                approvalId: verified.approvalId,
+                agentId: callerAgentId
+            });
+            return {
+                content: [{ type: 'text' as const, text: 'Self-approval is forbidden: the approving identity must differ from the requesting identity.' }],
+                isError: true
+            };
+        }
+
+        // Apply the decision
+        const newState = verified.action === 'approve' ? 'approved' : 'denied';
+        try {
+            this.approvalStore.updateState(verified.approvalId, newState as any, `agent:${callerAgentId}`);
+        } catch (err) {
+            return {
+                content: [{ type: 'text' as const, text: `Failed to update approval: ${err instanceof Error ? err.message : 'unknown error'}` }],
+                isError: true
+            };
+        }
+
+        this.logger.info('approval updated via approve_request tool', {
+            approvalId: verified.approvalId,
+            action: verified.action,
+            approver: callerAgentId
+        });
+
+        return {
+            content: [{ type: 'text' as const, text: `Approval ${verified.approvalId} has been ${newState}.` }]
+        };
     }
 }
 

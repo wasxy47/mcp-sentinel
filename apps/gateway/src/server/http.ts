@@ -143,6 +143,53 @@ export function buildApp(deps: HttpServerDeps): Hono {
         return sentinel.fetch(raw);
     });
 
+    // ── Approval loopback endpoints (M5) ──────────────────────────────────────
+    // One-time HMAC-signed links for human operators to approve or deny requests.
+    // The token encodes: approvalId, action, expiry, and HMAC signature.
+    // Single-use: once an approval transitions from 'pending', replayed tokens
+    // are rejected by the store's WHERE state='pending' guard.
+    app.get('/approve/:id', async c => {
+        const approvalId = c.req.param('id');
+        const token = c.req.query('token');
+        if (!token) return c.text('Missing token', 400);
+        if (!sentinel.signer || !sentinel.approvalStore) {
+            return c.text('Approval system not configured', 503);
+        }
+        try {
+            const verified = sentinel.signer.verify(token);
+            if (verified.approvalId !== approvalId || verified.action !== 'approve') {
+                return c.text('Token does not match this approval', 403);
+            }
+            sentinel.approvalStore.updateState(approvalId, 'approved', 'human-link');
+            logger.info('approval granted via loopback link', { approvalId });
+            return c.html('<html><body><h1>✅ Approved</h1><p>Request has been approved.</p></body></html>');
+        } catch (err) {
+            logger.warn('approval link rejected', { approvalId, error: err instanceof Error ? err.message : String(err) });
+            return c.text(`Approval failed: ${err instanceof Error ? err.message : 'unknown error'}`, 403);
+        }
+    });
+
+    app.get('/deny/:id', async c => {
+        const approvalId = c.req.param('id');
+        const token = c.req.query('token');
+        if (!token) return c.text('Missing token', 400);
+        if (!sentinel.signer || !sentinel.approvalStore) {
+            return c.text('Approval system not configured', 503);
+        }
+        try {
+            const verified = sentinel.signer.verify(token);
+            if (verified.approvalId !== approvalId || verified.action !== 'deny') {
+                return c.text('Token does not match this denial', 403);
+            }
+            sentinel.approvalStore.updateState(approvalId, 'denied', 'human-link');
+            logger.info('approval denied via loopback link', { approvalId });
+            return c.html('<html><body><h1>❌ Denied</h1><p>Request has been denied.</p></body></html>');
+        } catch (err) {
+            logger.warn('deny link rejected', { approvalId, error: err instanceof Error ? err.message : String(err) });
+            return c.text(`Denial failed: ${err instanceof Error ? err.message : 'unknown error'}`, 403);
+        }
+    });
+
     // ── 404 for everything else ──────────────────────────────────────────────────
     app.notFound(c => c.text('Not Found', 404));
 

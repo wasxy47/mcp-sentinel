@@ -289,6 +289,17 @@ const RiskSchema = z.object({
     provider: ProviderConfigSchema.optional()
 });
 
+const ApprovalSchema = z.object({
+    /** The HMAC secret used to sign one-time approval links (hex). */
+    hmacSecret: z.string().min(32, "HMAC secret must be at least 32 characters"),
+    
+    /** Base URL for loopback links, e.g. http://localhost:3000 */
+    loopbackBaseUrl: z.string().url(),
+    
+    /** Optional Discord webhook for notifications. If omitted, prints to stdout. */
+    discordWebhookUrl: z.string().url().optional()
+});
+
 export const GatewayConfigSchema = z
     .object({
         /** Identity Sentinel reports to upstreams, and to agents in discovery. */
@@ -309,6 +320,9 @@ export const GatewayConfigSchema = z
         catalog: CatalogSchema.prefault({}),
         forward: ForwardSchema.prefault({}),
         risk: RiskSchema.prefault({}),
+        approval: ApprovalSchema.optional(),
+        /** SQLite file for pending and completed approvals (M5). */
+        approvalDb: z.string().min(1).default('.sentinel/approvals.db'),
         servers: z.array(UpstreamServerSchema).default([]),
         /**
          * Group assignment for tools, used in policy evaluation.

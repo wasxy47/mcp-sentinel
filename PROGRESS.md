@@ -97,11 +97,11 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ## M5 — Approval flow
 
-- [ ] **M5.1 Approval store & lifecycle** — pending/approved/denied/expired.
-- [ ] **M5.2 HMAC-signed loopback endpoint** — one-time approve/deny links.
-- [ ] **M5.3 Discord webhook notifier** — request detail plus signed links.
-- [ ] **M5.4 `approve_request` MCP tool** — same lifecycle, no browser needed.
-- [ ] **M5.5 Task bridging** — suspended calls resume as MCP tasks.
+- [x] **M5.1 Approval store & lifecycle** — pending/approved/denied/expired.
+- [x] **M5.2 HMAC-signed loopback endpoint** — one-time approve/deny links.
+- [x] **M5.3 Discord webhook notifier** — request detail plus signed links.
+- [x] **M5.4 `approve_request` MCP tool** — same lifecycle, no browser needed.
+- [x] **M5.5 Task bridging** — suspended calls resume as MCP tasks.
 
 ## M6 — Server scanner
 

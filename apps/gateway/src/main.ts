@@ -38,6 +38,7 @@ import { SentinelServer } from './server/handlers.js';
 import { startHttpServer } from './server/http.js';
 import { AuditStore } from '@mcp-sentinel/audit';
 import { RiskEngine, GroqProvider, OllamaProvider } from '@mcp-sentinel/risk-engine';
+import { ApprovalStore, Signer, Notifier } from '@mcp-sentinel/approvals';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -158,8 +159,37 @@ async function main(): Promise<void> {
         escalateObligation: config.risk.escalateObligation
     });
 
+    // ── Approvals ────────────────────────────────────────────────────────────────
+    let approvalStore;
+    let signer;
+    let notifier;
+    if (config.approval) {
+        const approvalDir = path.dirname(config.approvalDb);
+        if (!fs.existsSync(approvalDir)) {
+            fs.mkdirSync(approvalDir, { recursive: true });
+        }
+        approvalStore = new ApprovalStore(config.approvalDb);
+        
+        const hmacRef = config.approval.hmacSecret;
+        const secretHex = hmacRef.startsWith('env:') ? process.env[hmacRef.slice(4)] : hmacRef;
+        if (!secretHex || secretHex.length < 32) {
+            logger.warn('Approval HMAC secret missing or too short, approvals will fail');
+        }
+        signer = new Signer(secretHex ?? '');
+        
+        const webhookRef = config.approval.discordWebhookUrl;
+        const discordWebhookUrl = webhookRef?.startsWith('env:') ? process.env[webhookRef.slice(4)] : webhookRef;
+        notifier = new Notifier({
+            loopbackBaseUrl: config.approval.loopbackBaseUrl,
+            discordWebhookUrl
+        });
+    }
+
     // ── Sentinel server ──────────────────────────────────────────────────────────
-    const sentinel = new SentinelServer({ config, registry, catalog, logger, auditStore, riskEngine });
+    const sentinel = new SentinelServer({ 
+        config, registry, catalog, logger, auditStore, riskEngine,
+        approvalStore, signer, notifier
+    });
 
     // ── HTTP server ──────────────────────────────────────────────────────────────
     const bound = await startHttpServer({ sentinel, settings: config.http, logger });

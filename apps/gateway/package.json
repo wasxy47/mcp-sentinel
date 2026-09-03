@@ -12,6 +12,7 @@
     "@mcp-sentinel/mcp-core": "0.1.0",
     "@mcp-sentinel/policy-engine": "0.1.0",
     "@mcp-sentinel/risk-engine": "0.1.0",
+    "@mcp-sentinel/approvals": "0.1.0",
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/core": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",

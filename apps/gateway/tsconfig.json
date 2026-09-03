@@ -13,6 +13,7 @@
         { "path": "../../packages/mcp-core" },
         { "path": "../../packages/policy-engine" },
         { "path": "../../packages/audit" },
-        { "path": "../../packages/risk-engine" }
+        { "path": "../../packages/risk-engine" },
+        { "path": "../../packages/approvals" }
     ]
 }
