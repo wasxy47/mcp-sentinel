@@ -51,11 +51,13 @@ import type { CatalogSettings } from '../config/schema.js';
 import { errorFields, type Logger } from '../observability/logger.js';
 import type { UpstreamClient } from '../upstream/client.js';
 import type { UpstreamRegistry } from '../upstream/registry.js';
+import type { Scanner } from '@mcp-sentinel/scanner';
 
 export interface ToolCatalogDeps {
     readonly registry: UpstreamRegistry;
     readonly settings: CatalogSettings;
     readonly logger: Logger;
+    readonly scanner?: Scanner;
 }
 
 /** Why a listed tool did not make it into the catalog. */
@@ -168,6 +170,7 @@ export class ToolCatalog {
     private readonly registry: UpstreamRegistry;
     private readonly settings: CatalogSettings;
     private readonly logger: Logger;
+    private readonly scanner?: Scanner;
 
     private readonly servers = new Map<string, ServerState>();
     /** Flattened lookup for resolution, rebuilt from scratch every refresh. */
@@ -178,6 +181,9 @@ export class ToolCatalog {
         this.registry = deps.registry;
         this.settings = deps.settings;
         this.logger = deps.logger;
+        if (deps.scanner) {
+            this.scanner = deps.scanner;
+        }
     }
 
     /** Every advertised tool, in configuration order then listed order. */
@@ -375,13 +381,19 @@ export class ToolCatalog {
             // Accepted: a first sighting, an unchanged digest, or a drift the
             // operator chose only to flag. The baseline records what is being
             // served, so the *next* change is measured against it.
+            let scan;
+            if (this.scanner) {
+                scan = await this.scanner.scanTool(measured.definition);
+            }
+
             state.baseline.set(toolName, measured.digest);
             next.set(toolName, {
                 qualifiedName,
                 serverId,
                 toolName,
                 definition: measured.definition,
-                definitionDigest: measured.digest
+                definitionDigest: measured.digest,
+                ...(scan ? { scan } : {})
             });
         }
 

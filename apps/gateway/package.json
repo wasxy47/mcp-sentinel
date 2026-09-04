@@ -8,14 +8,17 @@
     "build": "tsc --build"
   },
   "dependencies": {
+    "@hono/node-server": "^1.19.17",
+    "@mcp-sentinel/approvals": "0.1.0",
     "@mcp-sentinel/audit": "0.1.0",
     "@mcp-sentinel/mcp-core": "0.1.0",
     "@mcp-sentinel/policy-engine": "0.1.0",
     "@mcp-sentinel/risk-engine": "0.1.0",
-    "@mcp-sentinel/approvals": "0.1.0",
+    "@mcp-sentinel/scanner": "0.1.0",
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/core": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
+    "hono": "^4.13.3",
     "zod": "^4.4.3"
   }
 }

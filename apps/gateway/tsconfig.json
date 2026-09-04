@@ -14,6 +14,7 @@
         { "path": "../../packages/policy-engine" },
         { "path": "../../packages/audit" },
         { "path": "../../packages/risk-engine" },
-        { "path": "../../packages/approvals" }
+        { "path": "../../packages/approvals" },
+        { "path": "../../packages/scanner" }
     ]
 }

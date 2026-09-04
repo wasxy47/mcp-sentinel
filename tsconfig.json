@@ -9,6 +9,7 @@
         { "path": "./packages/audit" },
         { "path": "./packages/risk-engine" },
         { "path": "./packages/approvals" },
+        { "path": "./packages/scanner" },
         { "path": "./apps/gateway" }
     ]
 }

@@ -105,12 +105,12 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ## M6 — Server scanner
 
-- [ ] **M6.1 Static detectors** — tool poisoning, invisible Unicode, shadowing,
+- [x] **M6.1 Static detectors** — tool poisoning, invisible Unicode, shadowing,
       definition drift, annotation lying.
-- [ ] **M6.2 Result-side injection scanning** — untrusted tool *output*.
-- [ ] **M6.3 Optional classifier** — `llama-prompt-guard-2-86m` when a key is
+- [x] **M6.2 Result-side injection scanning** — untrusted tool *output*.
+- [x] **M6.3 Optional classifier** — `llama-prompt-guard-2-86m` when a key is
       configured.
-- [ ] **M6.4 Detection benchmark** — standalone test suite against known-benign
+- [x] **M6.4 Detection benchmark** — standalone test suite against known-benign
       and known-malicious fixtures; reports concrete detection rate/FP metrics.
 
 ## M7 — Sentinel's own tools

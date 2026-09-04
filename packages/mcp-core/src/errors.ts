@@ -130,7 +130,7 @@ export class PolicyDeniedError extends SentinelError {
 /** Human approval is required but the caller cannot carry a task handle. */
 export class ApprovalRequiredError extends SentinelError {
     public constructor(message: string, data?: Record<string, unknown>) {
-        super(SentinelErrorCode.ApprovalRequired, message, { data });
+        super(SentinelErrorCode.ApprovalRequired, message, { ...(data ? { data } : {}) });
     }
 }
 

@@ -39,6 +39,7 @@ import { startHttpServer } from './server/http.js';
 import { AuditStore } from '@mcp-sentinel/audit';
 import { RiskEngine, GroqProvider, OllamaProvider } from '@mcp-sentinel/risk-engine';
 import { ApprovalStore, Signer, Notifier } from '@mcp-sentinel/approvals';
+import { Scanner, ResultScanner } from '@mcp-sentinel/scanner';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -113,7 +114,12 @@ async function main(): Promise<void> {
     });
 
     // ── tool catalog ─────────────────────────────────────────────────────────────
-    const catalog = new ToolCatalog({ registry, settings: config.catalog, logger });
+    const hfToken = process.env['HF_TOKEN'];
+    const promptGuard = hfToken ? { hfToken } : undefined;
+    const scanner = new Scanner(promptGuard ? { promptGuard } : {});
+    const resultScanner = new ResultScanner(promptGuard ? { promptGuard } : {});
+    
+    const catalog = new ToolCatalog({ registry, settings: config.catalog, logger, scanner });
 
     // Initial catalog refresh. Errors are absorbed so the gateway can start
     // even if no upstream is reachable yet. The catalog will be empty until an
@@ -181,13 +187,13 @@ async function main(): Promise<void> {
         const discordWebhookUrl = webhookRef?.startsWith('env:') ? process.env[webhookRef.slice(4)] : webhookRef;
         notifier = new Notifier({
             loopbackBaseUrl: config.approval.loopbackBaseUrl,
-            discordWebhookUrl
+            ...(discordWebhookUrl ? { discordWebhookUrl } : {})
         });
     }
 
     // ── Sentinel server ──────────────────────────────────────────────────────────
     const sentinel = new SentinelServer({ 
-        config, registry, catalog, logger, auditStore, riskEngine,
+        config, registry, catalog, logger, auditStore, riskEngine, resultScanner,
         approvalStore, signer, notifier
     });
 

@@ -77,6 +77,7 @@ import {
 import type { AuditStore, AuditWriteError } from '@mcp-sentinel/audit';
 import type { RiskEngine } from '@mcp-sentinel/risk-engine';
 import type { ApprovalStore, Signer, Notifier, ApprovalRequest } from '@mcp-sentinel/approvals';
+import type { ResultScanner } from '@mcp-sentinel/scanner';
 
 /** The message every tasks/* stub returns. Searchable in logs and issues. */
 export const TASKS_DEFERRED_MESSAGE =
@@ -105,6 +106,8 @@ export interface SentinelServerDeps {
     readonly auditStore?: AuditStore | undefined;
     /** Optional risk engine. If absent, risk is not evaluated. */
     readonly riskEngine?: RiskEngine | undefined;
+    /** Optional result scanner. If absent, outputs are not scanned. */
+    readonly resultScanner?: ResultScanner | undefined;
     /** Injectable clock. Tests must not depend on wall time. */
     readonly now?: () => number;
     /** Store for pending M5 approvals. */
@@ -132,6 +135,7 @@ export class SentinelServer {
     private readonly policyEngine?: PolicyEngine;
     private readonly auditStore?: AuditStore | undefined;
     private readonly riskEngine?: RiskEngine | undefined;
+    private readonly resultScanner?: ResultScanner | undefined;
     public readonly approvalStore?: ApprovalStore | undefined;
     public readonly signer?: Signer | undefined;
     private readonly notifier?: Notifier | undefined;
@@ -161,6 +165,9 @@ export class SentinelServer {
         }
         if (deps.riskEngine) {
             this.riskEngine = deps.riskEngine;
+        }
+        if (deps.resultScanner) {
+            this.resultScanner = deps.resultScanner;
         }
         this.approvalStore = deps.approvalStore;
         this.signer = deps.signer;
@@ -420,6 +427,33 @@ export class SentinelServer {
             
             try {
                 const outcome = await this.forwarder.forward(route.target, undefined);
+                
+                if (this.resultScanner && outcome.result && typeof outcome.result === 'object' && Array.isArray((outcome.result as any).content)) {
+                    const resultText = JSON.stringify((outcome.result as any).content);
+                    const scan = await this.resultScanner.scanResult(resultText);
+                    
+                    if (scan.verdict === 'malicious') {
+                        this.logger.warn('Result-side scanner blocked response', { 
+                            qualifiedName: name, 
+                            highestSeverity: scan.highestSeverity 
+                        });
+                        return {
+                            content: [{ 
+                                type: 'text', 
+                                text: `Sentinel blocked this tool response: the server returned content flagged as ${scan.highestSeverity} risk by the result scanner.` 
+                            }],
+                            isError: true
+                        } as any;
+                    } else if (scan.verdict === 'suspicious') {
+                        this.logger.info('Result-side scanner flagged suspicious response (passed through)', {
+                            qualifiedName: name,
+                            highestSeverity: scan.highestSeverity
+                        });
+                        // M6: Suspicious but not blocked - audit trail should ideally record this,
+                        // but since the call is already audited, logging is the primary signal for now.
+                    }
+                }
+
                 // Ideally we'd append an audit update here with resultDigest, but AuditStore is append-only.
                 return outcome.result;
             } catch (error) {

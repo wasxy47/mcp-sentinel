@@ -1,0 +1,14 @@
+{
+  "name": "@mcp-sentinel/scanner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mcp-sentinel/mcp-core": "0.1.0"
+  }
+}
