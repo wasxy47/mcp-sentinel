@@ -44,15 +44,19 @@ const CAPABILITY_KEYWORDS: ReadonlyArray<{
     {
         capability: 'shell',
         keywords: [
-            /\bexecute\b/i, /\bshell\b/i, /\bbash\b/i, /\bcommand\b/i,
-            /\bsubprocess\b/i, /\bterminal\b/i, /\brun\s+command\b/i,
+            /\bshell\b/i, /\bbash\b/i, /\bsubprocess\b/i, /\bterminal\b/i,
+            /\brun\s+(?:a\s+)?command\b/i, /\bexecute\s+(?:a\s+)?(?:bash|shell|command|script|subprocess)\b/i,
+            /\bcommand\s+line\b/i,
         ]
     },
     {
         capability: 'database',
         keywords: [
-            /\bsql\b/i, /\bquery\b/i, /\bdatabase\b/i, /\btable\b/i,
-            /\bschema\b/i, /\bdrop\b/i, /\binsert\b/i, /\bupdate\b/i, /\bdelete\b/i,
+            /\bsql\b/i, /\bdatabase\b/i, /\b(?:database|sql|db)\s+table\b/i,
+            /\b(?:database|sql|db)\s+schema\b/i, /\bschema\s+migration\b/i,
+            /\bdrop\s+table\b/i, /\binsert\s+into\b/i, /\bupdate\s+\w+\s+set\b/i,
+            /\bdelete\s+from\b/i, /\b(?:sql|database|db)\s+query\b/i,
+            /\bquery(?:ing)?\s+(?:the\s+)?(?:database|db|tables?)\b/i,
         ]
     },
     {
@@ -68,13 +72,14 @@ const CAPABILITY_KEYWORDS: ReadonlyArray<{
 const NAME_CAPABILITY_MAP: ReadonlyArray<{ pattern: RegExp; capabilities: string[] }> = [
     { pattern: /weather|forecast|climate/i, capabilities: ['weather'] },
     { pattern: /search|find|lookup|query/i, capabilities: ['search'] },
-    { pattern: /math|calc|compute/i, capabilities: ['math'] },
+    { pattern: /math|calc|compute|sum|add|sub|mul|div/i, capabilities: ['math'] },
     { pattern: /time|clock|date/i, capabilities: ['time'] },
     { pattern: /translate|language/i, capabilities: ['translation'] },
-    { pattern: /file|read|write|fs|directory/i, capabilities: ['filesystem'] },
-    { pattern: /http|api|fetch|request|web/i, capabilities: ['network'] },
-    { pattern: /shell|exec|command|run|bash/i, capabilities: ['shell'] },
-    { pattern: /sql|db|database|query/i, capabilities: ['database'] },
+    { pattern: /file|read|write|fs|directory|folder|path/i, capabilities: ['filesystem'] },
+    { pattern: /http|api|fetch|request|web|url|net|network|remote|endpoint/i, capabilities: ['network'] },
+    { pattern: /shell|exec|command|run|bash|terminal|subprocess|cli/i, capabilities: ['shell'] },
+    { pattern: /sql|db|database|query|table/i, capabilities: ['database'] },
+    { pattern: /password|secret|token|key|credential|auth/i, capabilities: ['credentials'] },
 ];
 
 // ── Detection ───────────────────────────────────────────────────────────────

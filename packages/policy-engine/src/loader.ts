@@ -40,6 +40,8 @@ import type { Obligation } from '@mcp-sentinel/mcp-core';
 
 /** Per-policy metadata extracted from Cedar annotations. */
 export interface PolicyAnnotations {
+    /** The .cedar file this policy was loaded from. */
+    readonly file?: string;
     /** `@sentinel_obligation` value — present only on permit policies. */
     readonly obligation?: Obligation;
     /** `@sentinel_reason` value — human-readable justification. */
@@ -187,8 +189,8 @@ export function loadBundle(policyDir: string, schemaPath: string): PolicyBundle 
             staticPolicies[id] = source;
             const annotationEntry: PolicyAnnotations =
                 effect === 'permit'
-                    ? { effect, obligation: obligation as Obligation, reason }
-                    : { effect, reason };
+                    ? { file, effect, obligation: obligation as Obligation, reason }
+                    : { file, effect, reason };
             annotations.set(id, annotationEntry);
         }
     }

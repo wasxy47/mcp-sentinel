@@ -79,10 +79,10 @@ const MAX_TAMPERED_DETAIL = 100;
  * Rows MUST be in `sequence ASC` order. The caller is responsible for
  * providing them — typically via `AuditStore.readAll()` or paginated reads.
  */
-export function verifyChain(rows: readonly AuditRow[]): VerificationReport {
+export function verifyChain(rows: readonly AuditRow[], initialPrevHash = GENESIS_HASH): VerificationReport {
     const start = performance.now();
 
-    let prevHash = GENESIS_HASH;
+    let prevHash = initialPrevHash;
     let firstTamperedSequence: number | undefined;
     let firstTamperedDecisionId: string | undefined;
     const tampered: RowVerification[] = [];

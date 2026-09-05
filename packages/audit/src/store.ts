@@ -37,6 +37,7 @@ import {
     GENESIS_HASH,
     type DecisionRecord,
 } from '@mcp-sentinel/mcp-core';
+import { queryAuditLog, type AuditQueryFilter, type AuditQueryResult } from './query.js';
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
@@ -214,6 +215,46 @@ export class AuditStore {
         return this.db.prepare(
             'SELECT * FROM audit_log ORDER BY sequence ASC LIMIT ? OFFSET ?'
         ).all(limit, offset) as AuditRow[];
+    }
+
+    /** Retrieve a single decision row by its unique decisionId. */
+    getByDecisionId(decisionId: string): AuditRow | undefined {
+        return this.db.prepare(
+            'SELECT * FROM audit_log WHERE decisionId = ?'
+        ).get(decisionId) as AuditRow | undefined;
+    }
+
+    /** Query audit log using filters (agent, server, verdict, time, pagination). */
+    query(filter: AuditQueryFilter = {}): AuditQueryResult {
+        return queryAuditLog(this.db, filter);
+    }
+
+    /** Read a sequence range of audit rows with appropriate initial prevHash. */
+    readRange(fromSeq?: number, toSeq?: number): { rows: AuditRow[]; initialPrevHash: string } {
+        let sql = 'SELECT * FROM audit_log WHERE 1=1';
+        const params: any[] = [];
+        if (fromSeq !== undefined) {
+            sql += ' AND sequence >= ?';
+            params.push(fromSeq);
+        }
+        if (toSeq !== undefined) {
+            sql += ' AND sequence <= ?';
+            params.push(toSeq);
+        }
+        sql += ' ORDER BY sequence ASC';
+        const rows = this.db.prepare(sql).all(...params) as AuditRow[];
+
+        let initialPrevHash = GENESIS_HASH;
+        if (fromSeq !== undefined && fromSeq > 1) {
+            const prevRow = this.db.prepare(
+                'SELECT hash FROM audit_log WHERE sequence < ? ORDER BY sequence DESC LIMIT 1'
+            ).get(fromSeq) as { hash: string } | undefined;
+            if (prevRow) {
+                initialPrevHash = prevRow.hash;
+            }
+        }
+
+        return { rows, initialPrevHash };
     }
 
     /**

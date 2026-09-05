@@ -107,11 +107,12 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done
 
 - [x] **M6.1 Static detectors** — tool poisoning, invisible Unicode, shadowing,
       definition drift, annotation lying.
-- [x] **M6.2 Result-side injection scanning** — untrusted tool *output*.
-- [x] **M6.3 Optional classifier** — `llama-prompt-guard-2-86m` when a key is
-      configured.
-- [x] **M6.4 Detection benchmark** — standalone test suite against known-benign
-      and known-malicious fixtures; reports concrete detection rate/FP metrics.
+- [x] **M6.2 Result-side injection scanning** — untrusted tool *output* with fail-closed blocking.
+- [x] **M6.3 Optional classifier** — `meta-llama/Prompt-Guard-86M` via HuggingFace Inference API.
+- [x] **M6.4 Detection benchmark** — standalone test suite against 100 synthetic fixtures
+      (50 malicious attacks, 50 benign utilities). Results: 100% detection rate (50/50),
+      0% false positive rate (0/50).
+      *44 tests across 7 test files in `packages/scanner`. `npm run check` green (581 tests total).*
 
 ## M7 — Sentinel's own tools
 

@@ -39,8 +39,7 @@ export type ResourceKind = 'tool' | 'mcp-resource' | 'prompt' | 'endpoint';
 export interface AgentPrincipal {
     readonly id: string;
     readonly trustTier: 'trusted' | 'standard' | 'untrusted';
-    /** Always false in M2 — see module docstring. */
-    readonly authenticated: false;
+    readonly authenticated: boolean;
     readonly clientName: string;
     readonly agentGroups: readonly string[];
 }
@@ -109,7 +108,7 @@ export function buildEntities(
         uid: { type: 'Sentinel::Agent', id: principal.id },
         attrs: {
             trustTier: principal.trustTier,
-            authenticated: false, // always false in M2 — see module docstring
+            authenticated: principal.authenticated,
             clientName: principal.clientName,
         },
         parents: agentGroupParents,
@@ -229,7 +228,7 @@ export function agentPrincipalFromIdentity(
     return {
         id: identity.id,
         trustTier: identity.trustTier,
-        authenticated: false, // M2 — no auth layer yet
+        authenticated: identity.authenticated,
         clientName: identity.name ?? 'unknown',
         agentGroups,
     };

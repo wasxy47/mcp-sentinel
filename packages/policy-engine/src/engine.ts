@@ -84,6 +84,33 @@ export class PolicyEngine {
     ) {}
 
     /**
+     * List all loaded Cedar policies with their metadata and annotations.
+     * Optionally filtered by source policy filename.
+     */
+    listPolicies(fileFilter?: string): Array<{
+        readonly id: string;
+        readonly file?: string | undefined;
+        readonly effect: 'permit' | 'forbid';
+        readonly obligation?: Obligation | undefined;
+        readonly reason: string;
+    }> {
+        const result = [];
+        for (const [id, ann] of this.bundle.annotations.entries()) {
+            if (fileFilter !== undefined && ann.file !== fileFilter) {
+                continue;
+            }
+            result.push({
+                id,
+                file: ann.file,
+                effect: ann.effect,
+                obligation: ann.obligation,
+                reason: ann.reason
+            });
+        }
+        return result;
+    }
+
+    /**
      * Evaluate a single authorization request against the loaded policy bundle.
      *
      * Never throws (unless the Cedar WASM module itself crashes, which is a

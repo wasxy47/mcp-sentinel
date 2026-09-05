@@ -52,7 +52,7 @@ const RULES: readonly PatternRule[] = [
             /\b(?:always|never)\s+(?:do|send|include|pass|call|run|execute)\b/i,
             /\b(?:before|after)\s+(?:calling|using|running)\s+(?:this|any|the)\b/i,
             /\bIMPORTANT\s*:/i,
-            /\b(?:follow|obey|comply with)\s+(?:these|the following|this)\s+(?:instructions?|steps?|rules?)\b/i,
+            /\b(?:follow|obey|comply with)\s+(?:the|these|the following|this)\s+(?:instructions?|steps?|rules?)\b/i,
             /\b(?:step\s+\d+|first|then|next|finally)\s*[,:]\s*(?:read|write|send|call|execute|run)\b/i,
         ],
         detail: 'Tool descriptions should document what the tool does, not instruct the model. ' +
@@ -107,8 +107,8 @@ const RULES: readonly PatternRule[] = [
             /\bpost\s+(?:the\s+)?(?:data|contents?|results?)\s+to\s+(?:https?:\/\/|an?\s+(?:external|remote)\s+(?:url|server|endpoint))\b/i,
             /\bpass\s+(?:it|the\s+contents?|the\s+data)\s+as\s+(?:a\s+)?(?:parameter|argument|header|body)\b/i,
             /\b(?:encode|base64|encrypt)\s+(?:and\s+)?(?:send|pass|include|embed)\b/i,
-            /\bcurl\s+(?:-[a-zA-Z]+\s+)*https?:\/\//i,
-            /\bwget\s+(?:-[a-zA-Z]+\s+)*https?:\/\//i,
+            /\bcurl\b[^\r\n]*?https?:\/\//i,
+            /\bwget\b[^\r\n]*?https?:\/\//i,
             /\bfetch\s*\(\s*['"]https?:\/\//i,
         ],
         detail: 'Instructions to send data to external endpoints, encode data for exfiltration, ' +
